@@ -31,8 +31,20 @@ def _job_key(job_id: str) -> str:
     return f"{_JOB_PREFIX}{job_id}"
 
 
+_fake_redis_instance: aioredis.Redis | None = None  # type: ignore[type-arg]
+
+
 def _make_redis() -> aioredis.Redis:  # type: ignore[type-arg]
+    global _fake_redis_instance
     settings = get_settings()
+
+    if settings.use_fake_redis:
+        import fakeredis.aioredis
+
+        if _fake_redis_instance is None:
+            _fake_redis_instance = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        return _fake_redis_instance
+
     return aioredis.from_url(settings.redis_url, decode_responses=True)
 
 

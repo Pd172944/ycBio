@@ -13,14 +13,14 @@ BioOS is an orchestration harness that connects AI bioscience models (AlphaFold 
 
 ## Tech Stack
 
-**Frontend**: Next.js 14 (App Router), TypeScript, Tailwind CSS, shadcn/ui, Zustand, React Query  
-**Backend API**: FastAPI (Python 3.11), async, Pydantic v2  
-**Agent Layer**: Claude claude-sonnet-4-20250514 via Anthropic SDK (Python), with tool_use for every external model call  
-**Queue/Workers**: Redis + Celery (async pipeline execution)  
-**DB**: PostgreSQL via SQLAlchemy async + Alembic migrations  
-**File Storage**: Local filesystem under `./data/artifacts/` organised by `run_id`. Stores PDB files, SDF files, and generated reports. No S3 or object storage.  
-**Auth**: NextAuth.js (frontend) + JWT middleware (FastAPI)  
-**Observability**: OpenTelemetry traces on every agent step  
+**Frontend**: Next.js 14 (App Router), TypeScript, Tailwind CSS, shadcn/ui, Zustand, React Query
+**Backend API**: FastAPI (Python 3.11), async, Pydantic v2
+**Agent Layer**: Claude claude-sonnet-4-20250514 via Anthropic SDK (Python), with tool_use for every external model call
+**Queue/Workers**: Redis + Celery (async pipeline execution)
+**DB**: PostgreSQL via SQLAlchemy async + Alembic migrations
+**File Storage**: Local filesystem under `./data/artifacts/` organised by `run_id`. Stores PDB files, SDF files, and generated reports. No S3 or object storage.
+**Auth**: NextAuth.js (frontend) + JWT middleware (FastAPI)
+**Observability**: OpenTelemetry traces on every agent step
 
 ---
 

@@ -115,13 +115,24 @@ async def trigger_modal_job(job_id: str, sequence: str) -> ModalJobHandle:
     Returns:
         ModalJobHandle with call_id and volume path
     """
+    from app.settings import get_settings
+
     bound_log = log.bind(job_id=job_id)
     await bound_log.ainfo("modal_dispatch", sequence_len=len(sequence))
+
+    settings = get_settings()
+    if getattr(settings, "mock_modal", False):
+        await bound_log.awarning("modal_mock_mode", job_id=job_id)
+        return ModalJobHandle(
+            modal_call_id=f"mock-{job_id}",
+            volume_path=f"/outputs/{job_id}/raw_result.json",
+            status="submitted",
+        )
 
     try:
         import modal  # type: ignore[import-untyped]
 
-        fn = modal.Function.lookup("biosync-orchestrator", "run_inference")
+        fn = modal.Function.from_name("biosync-orchestrator", "run_inference")
         call = await fn.spawn.aio(sequence=sequence, job_id=job_id)
 
         handle = ModalJobHandle(
@@ -142,6 +153,50 @@ async def trigger_modal_job(job_id: str, sequence: str) -> ModalJobHandle:
 # ---------------------------------------------------------------------------
 
 
+def _summarize_for_moe(raw_output: dict) -> dict:
+    """
+    Extract key metrics from raw Tamarind output for MoE analysis.
+    Strips large fields (PDB strings, MSA data) that would exceed Claude's context.
+    """
+    summary: dict = {}
+
+    # Always keep metadata
+    for key in ("job_id", "tamarind_job_name", "sequence_length", "mock"):
+        if key in raw_output:
+            summary[key] = raw_output[key]
+
+    # Confidence / pLDDT scores
+    for key in ("confidence", "plddt_scores", "plddt_mean", "pae", "ptm", "iptm"):
+        if key in raw_output:
+            val = raw_output[key]
+            # Truncate large score arrays to first 100 values
+            if isinstance(val, list) and len(val) > 100:
+                summary[key] = val[:100]
+                summary[f"{key}_truncated"] = True
+            else:
+                summary[key] = val
+
+    # Binding affinity / docking scores
+    for key in ("binding_affinity", "docking_score", "rmsd"):
+        if key in raw_output:
+            summary[key] = raw_output[key]
+
+    # Job status / error info
+    for key in ("status", "error", "warnings", "jobId"):
+        if key in raw_output:
+            summary[key] = raw_output[key]
+
+    # Truncate any remaining string fields (e.g. PDB) to avoid token overflow
+    for key, val in raw_output.items():
+        if key not in summary:
+            if isinstance(val, str) and len(val) > 500:
+                summary[key] = val[:500] + "... [truncated]"
+            elif not isinstance(val, (dict, list)):
+                summary[key] = val
+
+    return summary
+
+
 async def run_moe_analysis(raw_output: dict) -> MoEReport:
     """
     Run three expert agents in parallel (statistician, critic, synthesizer).
@@ -156,13 +211,16 @@ async def run_moe_analysis(raw_output: dict) -> MoEReport:
     bound_log = log.bind(job_id=job_id)
     await bound_log.ainfo("moe_start")
 
+    summarized = _summarize_for_moe(raw_output)
+    await bound_log.ainfo("moe_summary_keys", keys=list(summarized.keys()))
+
     statistician_result, critic_result = await asyncio.gather(
-        run_statistician(raw_output),
-        run_critic(raw_output),
+        run_statistician(summarized),
+        run_critic(summarized),
     )
 
     synthesizer_result = await run_synthesizer(
-        raw_output=raw_output,
+        raw_output=summarized,
         statistician=statistician_result,
         critic=critic_result,
     )
@@ -192,13 +250,29 @@ async def await_modal_output(handle: ModalJobHandle, store: RedisStore, job_id: 
     Poll Modal for the completed inference result and return the raw output dict.
     Writes the output to Redis via the store.
     """
+    from app.settings import get_settings
+
     bound_log = log.bind(job_id=job_id)
+    settings = get_settings()
+
+    if getattr(settings, "mock_modal", False) or handle.modal_call_id.startswith("mock-"):
+        await bound_log.awarning("modal_mock_output", job_id=job_id)
+        result = {
+            "job_id": job_id,
+            "sequence_length": 16,
+            "pdb_string": "MOCK_PDB_DATA",
+            "confidence": 0.87,
+            "plddt_scores": [0.85, 0.88, 0.91, 0.87, 0.83],
+            "mock": True,
+        }
+        await store.set_modal_output(job_id, result)
+        return result
 
     try:
         import modal  # type: ignore[import-untyped]
 
         fc = modal.FunctionCall.from_id(handle.modal_call_id)
-        result: dict = await fc.get.aio(timeout=600)
+        result = await fc.get.aio(timeout=600)
     except Exception as exc:
         await bound_log.aerror("modal_poll_failed", error=str(exc))
         raise

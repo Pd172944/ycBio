@@ -11,7 +11,6 @@ Endpoints:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -147,10 +146,7 @@ async def create_job(
         "error": None,
     }
 
-    background_tasks.add_task(
-        asyncio.create_task,
-        _run_pipeline_background(job_id, initial_state),
-    )
+    background_tasks.add_task(_run_pipeline_background, job_id, initial_state)
 
     await bound_log.ainfo("job_accepted", pipeline_id=request.pipeline_id)
 

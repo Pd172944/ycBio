@@ -15,6 +15,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
     # Anthropic
@@ -29,6 +30,7 @@ class Settings(BaseSettings):
 
     # Redis
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
+    use_fake_redis: bool = Field(default=False, alias="USE_FAKE_REDIS")
 
     # Modal
     modal_app_name: str = Field(default="biosync-orchestrator", alias="MODAL_APP_NAME")
