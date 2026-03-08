@@ -37,8 +37,8 @@ Use `respx` to mock HTTP calls:
 ```python
 import respx, httpx
 with respx.mock:
-    respx.post("https://api.tamarind.bio/v1/predict/structure").mock(
-        return_value=httpx.Response(200, json={"pdb_string": "...", "confidence": 0.92})
+    respx.post("https://app.tamarind.bio/api/submit-job").mock(
+        return_value=httpx.Response(200, json={"jobId": "abc-123", "status": "submitted"})
     )
 ```
 
