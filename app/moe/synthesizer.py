@@ -11,6 +11,7 @@ import json
 import structlog
 from anthropic import AsyncAnthropic
 
+from app.moe.utils import parse_json_response
 from app.orchestrator.state import CriticOutput, StatisticianOutput, SynthesizerOutput
 from app.settings import get_settings
 
@@ -76,9 +77,9 @@ async def run_synthesizer(
     raw_text = message.content[0].text if message.content else "{}"
 
     try:
-        parsed = json.loads(raw_text)
+        parsed = parse_json_response(raw_text)
         return SynthesizerOutput(**parsed)
-    except (json.JSONDecodeError, ValueError) as exc:
+    except (ValueError, KeyError) as exc:
         await log.awarning("synthesizer_parse_failed", error=str(exc))
         return SynthesizerOutput(
             executive_summary="Analysis complete. See raw outputs for details.",
