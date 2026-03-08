@@ -34,10 +34,12 @@ apps/api/agents/tools/stubs/docking_stub.py
 apps/api/agents/tools/stubs/folding_stub.py
 apps/api/agents/tools/stubs/literature_stub.py
 apps/api/alembic/env.py
+apps/api/alembic/versions/3e706844b2ac_initial.py
 apps/api/core/auth.py
 apps/api/core/config.py
 apps/api/core/database.py
 apps/api/core/files.py
+apps/api/core/store.py
 apps/api/models/__init__.py
 apps/api/models/molecule.py
 apps/api/models/pipeline_run.py
@@ -55,7 +57,9 @@ apps/api/schemas/molecule.py
 apps/api/schemas/pipeline.py
 apps/api/services/report_service.py
 apps/api/workers/celery_app.py
+apps/api/workers/modal_runner.py
 apps/api/workers/pipeline_worker.py
+apps/web/node_modules/flatted/python/flatted.py
 biosync_orchestrator.egg-info/PKG-INFO
 biosync_orchestrator.egg-info/SOURCES.txt
 biosync_orchestrator.egg-info/dependency_links.txt

@@ -44,7 +44,7 @@ async def create_pipeline_run(
     existing_run = await db.execute(
         select(PipelineRun).where(PipelineRun.run_key == run_key)
     )
-    existing = existing_run.scalar_one_or_none()
+    existing = existing_run.scalars().first()
     if existing and existing.status == PipelineStatus.COMPLETED:
         # Return existing completed run
         await db.refresh(existing, ["steps"])
@@ -72,7 +72,7 @@ async def create_pipeline_run(
             run_id=pipeline_run.id,
             step_name=config_step.step_name,
             status=StepStatus.PENDING,
-            metadata=config_step.params
+            step_metadata=config_step.params
         )
         db.add(step)
     

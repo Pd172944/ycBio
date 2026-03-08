@@ -67,7 +67,7 @@ class PipelineStep(Base):
     agent_reasoning = Column(Text, nullable=True)
     input_artifact_key = Column(String, nullable=True)
     output_artifact_key = Column(String, nullable=True)
-    metadata = Column(JSONB, nullable=True, default=dict)
+    step_metadata = Column("metadata", JSONB, nullable=True, default=dict)
     error_message = Column(Text, nullable=True)
 
     # Relationships

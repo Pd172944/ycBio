@@ -9,7 +9,13 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    # bcrypt only hashes the first 72 bytes of the password. if the user
+    # accidentally includes extra data (e.g. whitespace or a long string from
+    # the client) we truncate here rather than letting the backend raise a
+    # ValueError which manifests as a 500 during login.
+    # the seed user password is short so normal usage is unaffected.
+    trimmed = plain_password.strip()[:72]
+    return pwd_context.verify(trimmed, hashed_password)
 
 
 def get_password_hash(password: str) -> str:

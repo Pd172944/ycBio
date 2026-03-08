@@ -73,7 +73,7 @@ async def audit_context(
     await bound_log.ainfo("audit_start", history_count=len(history))
 
     message = await client.messages.create(
-        model="claude-opus-4-6",
+        model="claude-sonnet-4-6",
         max_tokens=1024,
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_content}],

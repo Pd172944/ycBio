@@ -49,7 +49,7 @@ async def run_critic(raw_output: dict) -> CriticOutput:
     user_content = json.dumps(raw_output, indent=2)
 
     message = await client.messages.create(
-        model="claude-opus-4-6",
+        model="claude-sonnet-4-6",
         max_tokens=1024,
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": f"Review this inference output:\n{user_content}"}],

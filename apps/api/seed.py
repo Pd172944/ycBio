@@ -88,7 +88,7 @@ async def create_example_pipeline_run(db: AsyncSession, user: User) -> PipelineR
             started_at=datetime.utcnow() - timedelta(hours=2) + timedelta(minutes=i*15),
             completed_at=datetime.utcnow() - timedelta(hours=2) + timedelta(minutes=i*15+10),
             agent_reasoning=step_data["reasoning"],
-            metadata={"example": True}
+            step_metadata={"example": True}
         )
         db.add(step)
     
