@@ -74,7 +74,7 @@ async def stream_pipeline_events(
                                 "agent_reasoning": step.agent_reasoning,
                                 "started_at": step.started_at.isoformat() if step.started_at else None,
                                 "completed_at": step.completed_at.isoformat() if step.completed_at else None,
-                                "metadata": step.metadata
+                                "metadata": step.step_metadata
                             },
                             run_id=run_id,
                             step_id=str(step.id)

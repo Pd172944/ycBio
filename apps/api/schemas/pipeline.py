@@ -29,7 +29,7 @@ class PipelineStepResponse(BaseModel):
     agent_reasoning: Optional[str]
     input_artifact_key: Optional[str]
     output_artifact_key: Optional[str]
-    metadata: Dict[str, Any]
+    step_metadata: Dict[str, Any]
     error_message: Optional[str]
 
 

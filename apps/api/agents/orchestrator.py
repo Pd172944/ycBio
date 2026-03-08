@@ -1,7 +1,7 @@
 import asyncio
 import json
 from typing import Dict, Any, List
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic
 from core.config import settings
 from core.files import write_artifact, read_artifact_text
 from models.pipeline_run import PipelineRun, PipelineStep, StepStatus
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class PipelineOrchestrator:
     def __init__(self):
-        self.client = Anthropic(api_key=settings.anthropic_api_key)
+        self.client = AsyncAnthropic(api_key=settings.anthropic_api_key)
         self.tools = [
             {
                 "name": "run_folding_agent",
@@ -131,7 +131,7 @@ class PipelineOrchestrator:
 
             # Execute orchestrator agent
             response = await self.client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=4000,
                 temperature=0.1,
                 system=ORCHESTRATOR_SYSTEM_PROMPT,

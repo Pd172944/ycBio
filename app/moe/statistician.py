@@ -48,7 +48,7 @@ async def run_statistician(raw_output: dict) -> StatisticianOutput:
     user_content = json.dumps(raw_output, indent=2)
 
     message = await client.messages.create(
-        model="claude-opus-4-6",
+        model="claude-sonnet-4-6",
         max_tokens=1024,
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": f"Analyze this inference output:\n{user_content}"}],
