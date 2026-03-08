@@ -2,7 +2,10 @@
 LangGraph state machine for BioSync pipeline orchestration.
 
 Node execution order:
-  validate → audit → dispatch_modal → await_modal → moe_analysis → complete
+  validate → audit → dispatch_modal → END
+
+After dispatch_modal the graph ends immediately. A background poller in main.py
+picks up jobs with status "running" and drives them to completion via Modal.
 
 Each node receives the full state dict and returns the full state dict with updates merged in.
 """
@@ -16,8 +19,6 @@ from app.integrations.redis_store import RedisStore
 from app.orchestrator.state import SequenceInput
 from app.orchestrator.tools import (
     audit_context,
-    await_modal_output,
-    run_moe_analysis,
     trigger_modal_job,
     validate_schema,
 )
@@ -94,38 +95,7 @@ async def node_dispatch_modal(state: dict) -> dict:
     await store.set_modal_handle(job_id, handle)
 
     await bound_log.ainfo("node_dispatch_modal_complete", call_id=handle.modal_call_id)
-    return {**state, "modal_handle": handle}
-
-
-async def node_await_modal(state: dict) -> dict:
-    """Poll Modal for inference completion and retrieve output."""
-    job_id: str = state["job_id"]
-    handle = state["modal_handle"]
-    store: RedisStore = state["_store"]
-    bound_log = log.bind(job_id=job_id)
-
-    await bound_log.ainfo("node_await_modal_start")
-    output = await await_modal_output(handle, store, job_id)
-
-    await bound_log.ainfo("node_await_modal_complete")
-    return {**state, "status": "analyzing", "modal_output": output}
-
-
-async def node_moe_analysis(state: dict) -> dict:
-    """Run parallel MoE expert analysis on inference output."""
-    job_id: str = state["job_id"]
-    raw_output: dict = state["modal_output"] or {}
-    store: RedisStore = state["_store"]
-    bound_log = log.bind(job_id=job_id)
-
-    await bound_log.ainfo("node_moe_start")
-    raw_output["job_id"] = job_id
-
-    report = await run_moe_analysis(raw_output)
-    await store.set_moe_report(job_id, report)
-
-    await bound_log.ainfo("node_moe_complete", confidence=report.overall_confidence)
-    return {**state, "status": "complete", "moe_report": report}
+    return {**state, "status": "running", "modal_handle": handle}
 
 
 # ---------------------------------------------------------------------------
@@ -142,11 +112,7 @@ def route_after_audit(state: dict) -> str:
 
 
 def route_after_dispatch(state: dict) -> str:
-    return "failed" if state.get("status") == "failed" else "await_modal"
-
-
-def route_after_await(state: dict) -> str:
-    return "failed" if state.get("status") == "failed" else "moe_analysis"
+    return "failed" if state.get("status") == "failed" else END
 
 
 # ---------------------------------------------------------------------------
@@ -160,8 +126,6 @@ def build_graph() -> StateGraph:
     graph.add_node("validate", node_validate)
     graph.add_node("audit", node_audit)
     graph.add_node("dispatch_modal", node_dispatch_modal)
-    graph.add_node("await_modal", node_await_modal)
-    graph.add_node("moe_analysis", node_moe_analysis)
     graph.add_node("failed", lambda s: s)
 
     graph.set_entry_point("validate")
@@ -173,12 +137,8 @@ def build_graph() -> StateGraph:
         "audit", route_after_audit, {"dispatch_modal": "dispatch_modal", "failed": END}
     )
     graph.add_conditional_edges(
-        "dispatch_modal", route_after_dispatch, {"await_modal": "await_modal", "failed": END}
+        "dispatch_modal", route_after_dispatch, {END: END, "failed": END}
     )
-    graph.add_conditional_edges(
-        "await_modal", route_after_await, {"moe_analysis": "moe_analysis", "failed": END}
-    )
-    graph.add_edge("moe_analysis", END)
 
     return graph
 

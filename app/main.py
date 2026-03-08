@@ -11,6 +11,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -24,6 +25,7 @@ from app.integrations.pipeline_registry import get_registry
 from app.integrations.redis_store import RedisStore
 from app.orchestrator.graph import run_pipeline
 from app.orchestrator.state import SequenceInput
+from app.orchestrator.tools import run_moe_analysis
 from app.validation.schemas import JobCreateRequest
 
 # ---------------------------------------------------------------------------
@@ -54,11 +56,106 @@ log = structlog.get_logger()
 # ---------------------------------------------------------------------------
 
 
+_POLLER_INTERVAL_SECONDS = 30
+_MODAL_POLL_TIMEOUT_SECONDS = 5
+
+
+async def _modal_poller(store: RedisStore) -> None:
+    """
+    Background asyncio task that polls Redis every 30 seconds for jobs with
+    status "running" that have a modal_call_id, then attempts a non-blocking
+    Modal result fetch. On success runs MoE analysis and marks the job complete.
+    """
+    bound_log = log.bind(component="modal_poller")
+    await bound_log.ainfo("modal_poller_started", interval=_POLLER_INTERVAL_SECONDS)
+
+    while True:
+        await asyncio.sleep(_POLLER_INTERVAL_SECONDS)
+
+        try:
+            jobs = await store.get_recent_jobs(limit=200)
+        except Exception as exc:
+            await bound_log.aerror("poller_redis_scan_failed", error=str(exc))
+            continue
+
+        running_jobs = [
+            j for j in jobs
+            if j.get("status") == "running"
+            and isinstance(j.get("modal_handle"), dict)
+            and j["modal_handle"].get("modal_call_id")
+        ]
+
+        for job in running_jobs:
+            job_id: str = job["job_id"]
+            job_log = log.bind(job_id=job_id, component="modal_poller")
+            call_id: str = job["modal_handle"]["modal_call_id"]
+
+            try:
+                from app.settings import get_settings
+                settings = get_settings()
+
+                if getattr(settings, "mock_modal", False) or call_id.startswith("mock-"):
+                    await job_log.awarning("poller_mock_modal_complete")
+                    raw_output: dict[str, Any] = {
+                        "job_id": job_id,
+                        "sequence_length": 16,
+                        "pdb_string": "MOCK_PDB_DATA",
+                        "confidence": 0.87,
+                        "plddt_scores": [0.85, 0.88, 0.91, 0.87, 0.83],
+                        "mock": True,
+                    }
+                else:
+                    import modal  # type: ignore[import-untyped]
+
+                    fc = modal.FunctionCall.from_id(call_id)
+                    raw_output = await fc.get.aio(timeout=_MODAL_POLL_TIMEOUT_SECONDS)
+
+                await job_log.ainfo("poller_modal_result_received")
+                raw_output["job_id"] = job_id
+
+                await store.set_modal_output(job_id, raw_output)
+
+                report = await run_moe_analysis(raw_output)
+                await store.set_moe_report(job_id, report)
+                await store.update_status(job_id, "complete")
+
+                await job_log.ainfo(
+                    "poller_job_complete", confidence=report.overall_confidence
+                )
+
+            except asyncio.TimeoutError:
+                await job_log.ainfo("poller_modal_still_running", call_id=call_id)
+
+            except Exception as exc:
+                # Check for Modal's own FunctionTimeoutError by name to avoid
+                # a hard import-time dependency on modal.exception
+                if type(exc).__name__ == "FunctionTimeoutError":
+                    await job_log.ainfo("poller_modal_still_running", call_id=call_id)
+                else:
+                    await job_log.aerror(
+                        "poller_job_failed",
+                        call_id=call_id,
+                        error=str(exc),
+                        error_type=type(exc).__name__,
+                    )
+                    await store.fail_job(job_id, str(exc))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[type-arg]
     await log.ainfo("biosync_startup")
-    yield
-    await log.ainfo("biosync_shutdown")
+    poller_store = get_store()
+    poller_task = asyncio.create_task(_modal_poller(poller_store))
+    try:
+        yield
+    finally:
+        poller_task.cancel()
+        try:
+            await poller_task
+        except asyncio.CancelledError:
+            pass
+        await poller_store.close()
+        await log.ainfo("biosync_shutdown")
 
 
 app = FastAPI(

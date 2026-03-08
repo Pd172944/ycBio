@@ -39,7 +39,7 @@ image = (
 
 # Polling config
 _POLL_INTERVAL_SECONDS = 30
-_MAX_POLL_ATTEMPTS = 20  # 20 * 30s = 10 min max
+_MAX_POLL_ATTEMPTS = 60  # 60 * 30s = 30 min max
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +50,7 @@ _MAX_POLL_ATTEMPTS = 20  # 20 * 30s = 10 min max
 @app.function(
     image=image,
     gpu="A10G",
-    timeout=600,
+    timeout=2400,  # 40 min — covers 30 min poll window + overhead
     volumes={"/outputs": volume},
     secrets=[modal.Secret.from_name("biosync-secrets")],
 )
@@ -148,19 +148,13 @@ async def run_inference(
         )
 
         if result_resp.status_code == 200 and result_resp.text.strip():
-            try:
-                result_data = result_resp.json()
-                # Tamarind returns a presigned URL — could be at top level or nested
-                presigned_url = (
-                    result_data
-                    if isinstance(result_data, str)
-                    else result_data.get("url") or result_data.get("presignedUrl")
-                )
-                if presigned_url:
-                    await log.ainfo("tamarind_result_ready", attempt=attempt)
-                    break
-            except Exception:
-                pass  # Not ready yet, keep polling
+            # Tamarind returns the presigned URL as a plain quoted string e.g. "https://..."
+            candidate = result_resp.text.replace('"', '').strip()
+            if candidate.startswith("https://"):
+                presigned_url = candidate
+                await log.ainfo("tamarind_result_ready", attempt=attempt)
+                break
+            # Not ready yet — keep polling
 
     if not presigned_url:
         raise TimeoutError(
@@ -169,34 +163,100 @@ async def run_inference(
         )
 
     # ------------------------------------------------------------------
-    # Step 3: Download results from presigned URL
+    # Step 3: Download zip from presigned S3 URL
     # ------------------------------------------------------------------
+    import io
+    import zipfile
+
     await log.ainfo("tamarind_download_start", url=presigned_url[:80])
 
     async with httpx.AsyncClient(timeout=120) as client:
         download_resp = await client.get(presigned_url)
     download_resp.raise_for_status()
 
-    # Results may be JSON or raw file content depending on what Tamarind returns
-    try:
-        result: dict = download_resp.json()
-    except Exception:
-        result = {"raw_content": download_resp.text}
-
-    result["job_id"] = job_id
-    result["tamarind_job_name"] = tamarind_job_name
-    result["sequence_length"] = len(sequence)
-
     # ------------------------------------------------------------------
-    # Write to Modal Volume
+    # Step 4: Extract zip — store PDBs to volume, parse score files
     # ------------------------------------------------------------------
-    output_path = f"/outputs/{job_id}/raw_result.json"
-    os.makedirs(f"/outputs/{job_id}", exist_ok=True)
-    with open(output_path, "w") as fh:
+    output_dir = f"/outputs/{job_id}"
+    os.makedirs(output_dir, exist_ok=True)
+
+    # File types to skip entirely (binary/large/not useful for analysis)
+    _SKIP_SUFFIXES = {".png", ".a3m", ".m8", ".parquet", ".ffdata", ".ffindex", ".cif"}
+    _SKIP_NAMES = {"predicted_aligned_error_v1.json"}  # PAE matrix — too large
+
+    pdb_files: list[str] = []
+    per_model_scores: list[dict] = []
+    config_data: dict = {}
+
+    with zipfile.ZipFile(io.BytesIO(download_resp.content)) as zf:
+        await log.ainfo("tamarind_zip_contents", files=zf.namelist())
+
+        for name in zf.namelist():
+            basename = os.path.basename(name)
+            lower = basename.lower()
+
+            # Skip directories and unwanted file types
+            if name.endswith("/") or any(lower.endswith(s) for s in _SKIP_SUFFIXES):
+                continue
+            if basename in _SKIP_NAMES:
+                continue
+
+            content = zf.read(name)
+            dest_path = f"{output_dir}/{basename}"
+
+            with open(dest_path, "wb") as fh:
+                fh.write(content)
+
+            if lower == "config.json":
+                try:
+                    config_data = json.loads(content)
+                except Exception:
+                    pass
+
+            elif "_scores_rank_" in lower and lower.endswith(".json"):
+                try:
+                    scores = json.loads(content)
+                    # Extract rank number from filename
+                    rank = int(lower.split("_scores_rank_")[1].split("_")[0])
+                    plddt_arr = scores.get("plddt", [])
+                    per_model_scores.append({
+                        "rank": rank,
+                        "plddt_mean": round(sum(plddt_arr) / len(plddt_arr), 3) if plddt_arr else None,
+                        "plddt_min": round(min(plddt_arr), 3) if plddt_arr else None,
+                        "plddt_max": round(max(plddt_arr), 3) if plddt_arr else None,
+                        "max_pae": scores.get("max_pae"),
+                        "ptm": scores.get("ptm"),
+                        "iptm": scores.get("iptm"),
+                    })
+                except Exception:
+                    pass
+
+            elif lower.endswith(".pdb"):
+                pdb_files.append(dest_path)
+
+    await volume.commit.aio()
+    per_model_scores.sort(key=lambda x: x["rank"])
+    await log.ainfo("output_written", dir=output_dir, pdb_count=len(pdb_files), models=len(per_model_scores))
+
+    best = per_model_scores[0] if per_model_scores else {}
+    result: dict = {
+        "job_id": job_id,
+        "tamarind_job_name": tamarind_job_name,
+        "sequence_length": len(sequence),
+        "pdb_paths": pdb_files,
+        "model_type": config_data.get("model_type", "alphafold2_ptm"),
+        "num_models": config_data.get("num_models"),
+        "num_recycles": config_data.get("num_recycles"),
+        "best_plddt_mean": best.get("plddt_mean"),
+        "best_plddt_min": best.get("plddt_min"),
+        "best_max_pae": best.get("max_pae"),
+        "best_ptm": best.get("ptm"),
+        "per_model_scores": per_model_scores,
+    }
+
+    summary_path = f"{output_dir}/raw_result.json"
+    with open(summary_path, "w") as fh:
         json.dump(result, fh, indent=2)
-
-    volume.commit()
-    await log.ainfo("output_written", path=output_path)
 
     return result
 

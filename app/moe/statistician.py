@@ -10,6 +10,7 @@ import json
 import structlog
 from anthropic import AsyncAnthropic
 
+from app.moe.utils import parse_json_response
 from app.orchestrator.state import StatisticianOutput
 from app.settings import get_settings
 
@@ -57,9 +58,9 @@ async def run_statistician(raw_output: dict) -> StatisticianOutput:
     raw_text = message.content[0].text if message.content else "{}"
 
     try:
-        parsed = json.loads(raw_text)
+        parsed = parse_json_response(raw_text)
         return StatisticianOutput(**parsed)
-    except (json.JSONDecodeError, ValueError) as exc:
+    except (ValueError, KeyError) as exc:
         await log.awarning("statistician_parse_failed", error=str(exc))
         return StatisticianOutput(
             confidence_score=0.5,
