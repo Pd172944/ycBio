@@ -1,6 +1,16 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
+import { Logo } from '@/components/ui/logo'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { AIResearchAssistant } from '@/components/ai-research-assistant'
+import { WorkflowBuilder } from '@/components/workflow-builder'
+import { cn } from '@/lib/utils'
 
 const API = 'http://localhost:8000'
 
@@ -27,33 +37,80 @@ interface PipelineRun {
 
 const STEP_NAMES = ['folding', 'binding_site', 'docking', 'admet', 'literature', 'documentation'] as const
 
+const STEP_META: Record<string, { label: string; desc: string; icon: React.ReactNode; color: string }> = {
+  folding: {
+    label: 'Structure Prediction',
+    desc: 'AlphaFold 3 / ESMFold via Modal → Tamarind',
+    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83" /></svg>,
+    color: 'emerald',
+  },
+  binding_site: {
+    label: 'Binding Site',
+    desc: 'Binding site identification & analysis',
+    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>,
+    color: 'cyan',
+  },
+  docking: {
+    label: 'Molecular Docking',
+    desc: 'DiffDock / AutoDock Vina simulations',
+    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" /></svg>,
+    color: 'violet',
+  },
+  admet: {
+    label: 'ADMET Screening',
+    desc: 'Drug-likeness & ADMET property prediction',
+    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>,
+    color: 'amber',
+  },
+  literature: {
+    label: 'Literature Search',
+    desc: 'PubMed / ChEMBL retrieval & analysis',
+    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></svg>,
+    color: 'pink',
+  },
+  documentation: {
+    label: 'FDA Report',
+    desc: 'FDA-grade documentation generation',
+    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /></svg>,
+    color: 'emerald',
+  },
+}
+
+const STEP_TOOLS: Record<string, Array<{ id: string; name: string }>> = {
+  folding:       [{ id: 'alphafold3', name: 'AlphaFold 3' }, { id: 'esmfold', name: 'ESMFold' }, { id: 'openfold', name: 'OpenFold' }],
+  binding_site:  [{ id: 'p2rank', name: 'P2Rank' }, { id: 'fpocket', name: 'FPocket' }, { id: 'sitemap', name: 'SiteMap' }],
+  docking:       [{ id: 'diffdock', name: 'DiffDock' }, { id: 'autodock_vina', name: 'AutoDock Vina' }, { id: 'gnina', name: 'Gnina' }],
+  admet:         [{ id: 'admetlab', name: 'ADMETlab 2.0' }, { id: 'swissadme', name: 'SwissADME' }, { id: 'pkcsm', name: 'pkCSM' }],
+  literature:    [{ id: 'pubmed_ai', name: 'PubMed + AI' }, { id: 'chembl', name: 'ChEMBL' }, { id: 'semantic_scholar', name: 'Semantic Scholar' }],
+  documentation: [{ id: 'fda_ind', name: 'FDA IND Report' }, { id: 'scientific', name: 'Scientific Summary' }, { id: 'full_report', name: 'Full Tech Report' }],
+}
+
 const EXAMPLE_SEQUENCES = [
-  { label: 'Insulin', value: 'MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKT' },
-  { label: 'Barnase', value: 'MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVVHSLAKWKRQTL' },
+  {
+    label: 'Insulin',
+    value: 'MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKT',
+    emoji: '💉',
+  },
+  {
+    label: 'Barnase',
+    value: 'MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVVHSLAKWKRQTL',
+    emoji: '🧬',
+  },
 ]
 
-function StatusBadge({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    pending: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-    running: 'bg-blue-100 text-blue-800 border-blue-200',
-    completed: 'bg-green-100 text-green-800 border-green-200',
-    failed: 'bg-red-100 text-red-800 border-red-200',
-  }
-  const dots: Record<string, string> = {
-    pending: 'bg-yellow-400',
-    running: 'bg-blue-500 animate-pulse',
-    completed: 'bg-green-500',
-    failed: 'bg-red-500',
-  }
+function StatusBadgeStyled({ status }: { status: string }) {
+  const variant = status as 'pending' | 'running' | 'completed' | 'failed'
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${colors[status] ?? ''}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${dots[status] ?? ''}`} />
+    <Badge variant={variant} pulse={status === 'running'}>
       {status}
-    </span>
+    </Badge>
   )
 }
 
-function LoginForm({ onLogin }: { onLogin: (token: string) => void }) {
+/* ──────────────────────────────────────────────────────
+   Login Screen
+   ────────────────────────────────────────────────────── */
+function LoginScreen({ onLogin }: { onLogin: (token: string) => void }) {
   const [email, setEmail] = useState('researcher@bioos.dev')
   const [password, setPassword] = useState('bioos2024')
   const [loading, setLoading] = useState(false)
@@ -63,8 +120,6 @@ function LoginForm({ onLogin }: { onLogin: (token: string) => void }) {
     e.preventDefault()
     setError(null)
     setLoading(true)
-    // trim/limit to 72 chars to mirror bcrypt behavior and avoid server
-    // ValueErrors when an overly long string is entered by mistake
     const safePassword = password.trim().slice(0, 72)
     try {
       const res = await fetch(`${API}/api/auth/login`, {
@@ -83,42 +138,669 @@ function LoginForm({ onLogin }: { onLogin: (token: string) => void }) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-8 w-full max-w-sm">
-        <div className="flex items-center gap-2 mb-6">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-            </svg>
+    <div className="min-h-screen flex items-center justify-center bg-background relative overflow-hidden">
+      {/* Background effects */}
+      <div className="absolute inset-0 bg-grid" />
+      <div className="absolute w-[500px] h-[500px] -top-32 -left-32 bg-emerald-500/10 rounded-full blur-3xl" />
+      <div className="absolute w-[400px] h-[400px] -bottom-32 -right-32 bg-cyan-500/10 rounded-full blur-3xl" />
+
+      <div className="relative w-full max-w-[420px] mx-4">
+        <div className="text-center mb-8">
+          <div className="flex justify-center mb-6">
+            <Logo size="lg" />
           </div>
-          <span className="font-bold text-gray-900 text-lg">BioOS</span>
+          <h1 className="text-2xl font-bold text-foreground mb-2">Welcome back</h1>
+          <p className="text-sm text-muted-foreground">Sign in to your research workspace</p>
         </div>
-        <h2 className="text-xl font-semibold text-gray-900 mb-5">Sign in</h2>
-        <form onSubmit={submit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required />
-          </div>
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          <button type="submit" disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white font-medium py-2.5 rounded-lg transition-colors">
-            {loading ? 'Signing in…' : 'Sign in'}
-          </button>
-        </form>
-        <p className="text-xs text-gray-400 mt-4 text-center">
-          Run <code className="bg-gray-100 px-1 rounded">python seed.py</code> in apps/api to create a test user
+
+        <Card className="border-border/50 bg-card/80 backdrop-blur-xl">
+          <CardContent className="p-6">
+            <form onSubmit={submit} className="space-y-5">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Email</label>
+                <Input
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Password</label>
+                <Input
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  required
+                />
+              </div>
+
+              {error && (
+                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400">
+                  {error}
+                </div>
+              )}
+
+              <Button type="submit" disabled={loading} className="w-full" size="lg">
+                {loading ? (
+                  <>
+                    <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Signing in…
+                  </>
+                ) : (
+                  'Sign in'
+                )}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        <p className="text-xs text-muted-foreground text-center mt-6">
+          Demo: <code className="text-emerald-400/70 bg-emerald-500/5 px-1.5 py-0.5 rounded">researcher@bioos.dev</code> / <code className="text-emerald-400/70 bg-emerald-500/5 px-1.5 py-0.5 rounded">bioos2024</code>
         </p>
       </div>
     </div>
   )
 }
 
+/* ──────────────────────────────────────────────────────
+   Sidebar Navigation
+   ────────────────────────────────────────────────────── */
+function Sidebar({
+  activeTab,
+  setActiveTab,
+  runsCount,
+  onOpenAI,
+}: {
+  activeTab: string
+  setActiveTab: (tab: 'submit' | 'workflow' | 'runs') => void
+  runsCount: number
+  onOpenAI: () => void
+}) {
+  const navItems = [
+    {
+      id: 'workflow' as const,
+      label: 'Visual Builder',
+      icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83" /></svg>,
+    },
+    {
+      id: 'submit' as const,
+      label: 'Form Builder',
+      icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 8v8M8 12h8" /></svg>,
+    },
+    {
+      id: 'runs' as const,
+      label: 'Pipeline Runs',
+      icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>,
+      badge: runsCount > 0 ? runsCount : undefined,
+    },
+  ]
+
+  return (
+    <aside className="hidden lg:flex flex-col w-64 border-r border-border bg-card/30 min-h-screen">
+      <div className="p-5 border-b border-border">
+        <Logo size="md" />
+      </div>
+
+      <nav className="flex-1 p-3 space-y-1">
+        {navItems.map(item => (
+          <button
+            key={item.id}
+            onClick={() => setActiveTab(item.id)}
+            className={cn(
+              "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
+              activeTab === item.id
+                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+            )}
+          >
+            {item.icon}
+            {item.label}
+            {item.badge && (
+              <span className="ml-auto text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 rounded-full px-2 py-0.5 border border-emerald-500/20">
+                {item.badge}
+              </span>
+            )}
+          </button>
+        ))}
+      </nav>
+
+      <div className="p-4 border-t border-border space-y-3">
+        {/* AI Assistant Button */}
+        <Button
+          onClick={onOpenAI}
+          variant="glow"
+          size="sm"
+          className="w-full justify-start gap-3"
+        >
+          <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-500/20 to-emerald-500/20 border border-violet-500/30 flex items-center justify-center">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-violet-400">
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+            </svg>
+          </div>
+          AI Assistant
+          <div className="ml-auto">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
+            </span>
+          </div>
+        </Button>
+
+        <div className="rounded-lg bg-gradient-to-br from-emerald-500/5 to-cyan-500/5 border border-emerald-500/10 p-3">
+          <p className="text-xs font-medium text-foreground mb-1">Compute Credits</p>
+          <div className="flex items-baseline gap-1 mb-2">
+            <span className="text-lg font-bold text-emerald-400">$530</span>
+            <span className="text-xs text-muted-foreground">remaining</span>
+          </div>
+          <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+            <div className="h-full w-4/5 bg-gradient-to-r from-emerald-500 to-cyan-500 rounded-full" />
+          </div>
+        </div>
+      </div>
+    </aside>
+  )
+}
+
+/* ──────────────────────────────────────────────────────
+   Top Header Bar
+   ────────────────────────────────────────────────────── */
+function TopBar({
+  apiHealth,
+  onSignOut,
+  activeTab,
+  setActiveTab,
+}: {
+  apiHealth: 'checking' | 'ok' | 'error'
+  onSignOut: () => void
+  activeTab: string
+  setActiveTab: (tab: 'submit' | 'workflow' | 'runs') => void
+}) {
+  return (
+    <header className="sticky top-0 z-20 flex items-center justify-between px-6 py-3 border-b border-border bg-background/80 backdrop-blur-xl">
+      {/* Mobile nav */}
+      <div className="flex lg:hidden items-center gap-2">
+        <Logo size="sm" />
+      </div>
+
+      {/* Mobile tabs */}
+      <div className="flex lg:hidden items-center gap-1 bg-secondary/50 rounded-lg p-1">
+        {(['workflow', 'submit', 'runs'] as const).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={cn(
+              "px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200",
+              activeTab === tab
+                ? "bg-emerald-500/10 text-emerald-400 shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {tab === 'workflow' ? 'Visual' : tab === 'submit' ? 'Form' : 'Runs'}
+          </button>
+        ))}
+      </div>
+
+      {/* Page title - desktop */}
+      <div className="hidden lg:block">
+        <h1 className="text-lg font-semibold text-foreground">
+          {activeTab === 'workflow' ? 'Visual Builder' : activeTab === 'submit' ? 'Form Builder' : 'Pipeline Runs'}
+        </h1>
+      </div>
+
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
+          <span className="relative flex h-2 w-2">
+            {apiHealth === 'ok' && (
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+            )}
+            <span className={cn(
+              "relative inline-flex h-2 w-2 rounded-full",
+              apiHealth === 'ok' ? 'bg-emerald-500' : apiHealth === 'error' ? 'bg-red-500' : 'bg-amber-500 animate-pulse'
+            )} />
+          </span>
+          <span className={cn(
+            "text-xs font-medium",
+            apiHealth === 'ok' ? 'text-emerald-400' : apiHealth === 'error' ? 'text-red-400' : 'text-amber-400'
+          )}>
+            {apiHealth === 'ok' ? 'API Online' : apiHealth === 'error' ? 'API Offline' : 'Checking…'}
+          </span>
+        </div>
+
+        <div className="h-4 w-px bg-border" />
+
+        <button
+          onClick={onSignOut}
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          Sign out
+        </button>
+      </div>
+    </header>
+  )
+}
+
+/* ──────────────────────────────────────────────────────
+   Pipeline Submit Form
+   ────────────────────────────────────────────────────── */
+function SubmitView({
+  sequence,
+  setSequence,
+  runName,
+  setRunName,
+  enabledSteps,
+  setEnabledSteps,
+  stepTools,
+  setStepTools,
+  submitting,
+  error,
+  apiHealth,
+  onSubmit,
+}: {
+  sequence: string
+  setSequence: (s: string) => void
+  runName: string
+  setRunName: (s: string) => void
+  enabledSteps: Record<string, boolean>
+  setEnabledSteps: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
+  stepTools: Record<string, string>
+  setStepTools: React.Dispatch<React.SetStateAction<Record<string, string>>>
+  submitting: boolean
+  error: string | null
+  apiHealth: string
+  onSubmit: () => void
+}) {
+  const enabledCount = Object.values(enabledSteps).filter(Boolean).length
+
+  return (
+    <div className="grid lg:grid-cols-5 gap-6 animate-fade-in">
+      {/* Main form */}
+      <div className="lg:col-span-3 space-y-6">
+        <Card className="overflow-hidden">
+          <CardHeader className="border-b border-border bg-secondary/20 pb-4">
+            <CardTitle className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 8v8M8 12h8" /></svg>
+              </div>
+              Submit Pipeline Run
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-6 space-y-5">
+            {/* Quick fill */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2.5">Quick fill sequence</p>
+              <div className="flex gap-2">
+                {EXAMPLE_SEQUENCES.map(ex => (
+                  <button
+                    key={ex.label}
+                    onClick={() => setSequence(ex.value)}
+                    className="group flex items-center gap-2 text-xs px-3.5 py-2 rounded-lg bg-secondary/50 border border-border text-muted-foreground hover:text-foreground hover:border-emerald-500/30 hover:bg-emerald-500/5 transition-all duration-200"
+                  >
+                    <span>{ex.emoji}</span>
+                    {ex.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Run name */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">Run name</label>
+              <Input
+                value={runName}
+                onChange={e => setRunName(e.target.value)}
+                placeholder="My Pipeline Run"
+              />
+            </div>
+
+            {/* Sequence */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-foreground">
+                  Sequence <span className="text-red-400">*</span>
+                </label>
+                {sequence.length > 0 && (
+                  <span className="text-xs text-muted-foreground">{sequence.length} residues</span>
+                )}
+              </div>
+              <Textarea
+                value={sequence}
+                onChange={e => setSequence(e.target.value)}
+                rows={5}
+                placeholder="Paste amino acid sequence (standard 20 amino acids)…"
+                className="font-mono text-xs"
+              />
+            </div>
+
+            {/* Pipeline steps */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-foreground">Pipeline steps</p>
+                <span className="text-xs text-muted-foreground">
+                  {enabledCount} of {STEP_NAMES.length} enabled
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {STEP_NAMES.map(step => {
+                  const meta = STEP_META[step]
+                  const enabled = enabledSteps[step] ?? false
+                  const tools = STEP_TOOLS[step] ?? []
+                  const selectedTool = stepTools[step] ?? tools[0]?.id ?? ''
+                  return (
+                    <div
+                      key={step}
+                      className={cn(
+                        "rounded-lg border transition-all duration-200",
+                        enabled
+                          ? "border-emerald-500/30 bg-emerald-500/5"
+                          : "border-border bg-secondary/20"
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setEnabledSteps(prev => ({ ...prev, [step]: !prev[step] }))}
+                        className="flex items-center gap-3 p-3 w-full text-left"
+                      >
+                        <div className={cn(
+                          "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors",
+                          enabled ? "bg-emerald-500/15 text-emerald-400" : "bg-secondary text-muted-foreground"
+                        )}>
+                          {meta.icon}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className={cn(
+                            "text-sm font-medium",
+                            enabled ? "text-foreground" : "text-muted-foreground"
+                          )}>
+                            {meta.label}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground truncate">{meta.desc}</p>
+                        </div>
+                        <div className={cn(
+                          "ml-auto w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-all",
+                          enabled
+                            ? "bg-emerald-500 border-emerald-500"
+                            : "border-border"
+                        )}>
+                          {enabled && (
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                          )}
+                        </div>
+                      </button>
+                      {enabled && tools.length > 1 && (
+                        <div className="px-3 pb-2.5">
+                          <select
+                            value={selectedTool}
+                            onChange={e => setStepTools(prev => ({ ...prev, [step]: e.target.value }))}
+                            className="w-full text-[11px] font-medium rounded-md px-2 py-1.5 bg-emerald-500/8 border border-emerald-500/20 text-emerald-300 focus:outline-none focus:border-emerald-500/40 cursor-pointer"
+                          >
+                            {tools.map(t => (
+                              <option key={t.id} value={t.id} style={{ background: '#0f172a', color: '#e2e8f0' }}>
+                                {t.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {error && (
+              <div className="p-3.5 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400 flex items-start gap-2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+                {error}
+              </div>
+            )}
+
+            <Button
+              onClick={onSubmit}
+              disabled={submitting || !sequence.trim() || apiHealth !== 'ok'}
+              className="w-full"
+              size="lg"
+            >
+              {submitting ? (
+                <>
+                  <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Submitting pipeline…
+                </>
+              ) : (
+                <>
+                  Run Pipeline
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
+                </>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Right sidebar — pipeline overview */}
+      <div className="lg:col-span-2 space-y-6">
+        <Card className="overflow-hidden">
+          <CardHeader className="border-b border-border bg-secondary/20 pb-4">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground"><path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" /></svg>
+              Pipeline Overview
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-5">
+            <div className="space-y-3">
+              {STEP_NAMES.map((step, i) => {
+                const meta = STEP_META[step]
+                const enabled = enabledSteps[step] ?? false
+                return (
+                  <div key={step} className="flex items-start gap-3">
+                    <div className="flex flex-col items-center">
+                      <div className={cn(
+                        "w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold transition-colors border",
+                        enabled
+                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                          : "bg-secondary text-muted-foreground border-border"
+                      )}>
+                        {i + 1}
+                      </div>
+                      {i < STEP_NAMES.length - 1 && (
+                        <div className={cn(
+                          "w-px h-6 mt-1 transition-colors",
+                          enabled ? "bg-emerald-500/20" : "bg-border"
+                        )} />
+                      )}
+                    </div>
+                    <div className="pb-2">
+                      <p className={cn(
+                        "text-sm font-medium transition-colors",
+                        enabled ? "text-foreground" : "text-muted-foreground"
+                      )}>
+                        {meta.label}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">{meta.desc}</p>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gradient-to-br from-emerald-500/5 to-cyan-500/5 border-emerald-500/10">
+          <CardContent className="p-5">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></svg>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-foreground mb-1">Pro tip</p>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Enable <span className="text-emerald-400 font-medium">Structure Prediction</span> +{' '}
+                  <span className="text-emerald-400 font-medium">Docking</span> +{' '}
+                  <span className="text-emerald-400 font-medium">ADMET</span> for a
+                  complete drug discovery pipeline.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+/* ──────────────────────────────────────────────────────
+   Runs List View
+   ────────────────────────────────────────────────────── */
+function RunsView({
+  runs,
+  onGoToSubmit,
+  onAnalyzeWithAI,
+}: {
+  runs: PipelineRun[]
+  onGoToSubmit: () => void
+  onAnalyzeWithAI: (runId: string) => void
+}) {
+  if (runs.length === 0) {
+    return (
+      <div className="animate-fade-in">
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <div className="w-16 h-16 rounded-2xl bg-secondary/50 flex items-center justify-center mb-4">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>
+            </div>
+            <h3 className="text-lg font-semibold text-foreground mb-2">No pipeline runs yet</h3>
+            <p className="text-sm text-muted-foreground mb-6 text-center max-w-sm">
+              Submit your first pipeline to see results here.
+              Start with a sample sequence to explore the platform.
+            </p>
+            <Button onClick={onGoToSubmit} variant="glow">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 8v8M8 12h8" /></svg>
+              Create Pipeline
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4 animate-fade-in">
+      {/* Stats bar */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-2">
+        {[
+          { label: 'Total', value: runs.length, color: 'text-foreground' },
+          { label: 'Running', value: runs.filter(r => r.status === 'running').length, color: 'text-cyan-400' },
+          { label: 'Completed', value: runs.filter(r => r.status === 'completed').length, color: 'text-emerald-400' },
+          { label: 'Failed', value: runs.filter(r => r.status === 'failed').length, color: 'text-red-400' },
+        ].map(stat => (
+          <Card key={stat.label} className="bg-card/50">
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground mb-1">{stat.label}</p>
+              <p className={cn("text-2xl font-bold", stat.color)}>{stat.value}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Runs */}
+      {runs.map((run, i) => (
+        <Card
+          key={run.id}
+          className="overflow-hidden hover:border-emerald-500/20 transition-all duration-300"
+          style={{ animationDelay: `${i * 50}ms` }}
+        >
+          <CardContent className="p-5 space-y-4">
+            {/* Run header */}
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2.5 mb-1.5">
+                  <span className="font-semibold text-foreground">{run.name}</span>
+                  <StatusBadgeStyled status={run.status} />
+                </div>
+                <p className="text-xs text-muted-foreground font-mono">{run.id}</p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onAnalyzeWithAI(run.id)}
+                  className="text-muted-foreground hover:text-violet-400 w-8 h-8"
+                  title="Analyze with AI Assistant"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                  </svg>
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  {new Date(run.created_at).toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {/* Sequence preview */}
+            <div className="rounded-lg bg-secondary/30 border border-border px-3.5 py-2.5">
+              <p className="text-[11px] text-muted-foreground font-mono truncate">
+                {run.target_sequence.slice(0, 90)}{run.target_sequence.length > 90 ? '…' : ''}
+              </p>
+            </div>
+
+            {/* Error */}
+            {run.error_message && (
+              <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400 flex items-start gap-2">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+                {run.error_message}
+              </div>
+            )}
+
+            {/* Steps */}
+            {run.steps.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Steps</p>
+                <div className="grid gap-2">
+                  {run.steps.map(step => {
+                    const meta = STEP_META[step.step_name] || { label: step.step_name, icon: null }
+                    return (
+                      <div
+                        key={step.id}
+                        className="flex items-start gap-3 p-3 rounded-lg bg-secondary/20 border border-border/50"
+                      >
+                        <StatusBadgeStyled status={step.status} />
+                        <div className="min-w-0 flex-1">
+                          <span className="text-sm font-medium text-foreground">
+                            {meta.label || step.step_name.replace('_', ' ')}
+                          </span>
+                          {step.agent_reasoning && (
+                            <p className="text-xs text-muted-foreground mt-1 line-clamp-2 leading-relaxed">
+                              {step.agent_reasoning}
+                            </p>
+                          )}
+                          {step.error_message && (
+                            <p className="text-xs text-red-400 mt-1">{step.error_message}</p>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  )
+}
+
+/* ──────────────────────────────────────────────────────
+   Main Dashboard
+   ────────────────────────────────────────────────────── */
 export default function Dashboard() {
   const [token, setToken] = useState<string | null>(null)
   const [sequence, setSequence] = useState('')
@@ -126,11 +808,17 @@ export default function Dashboard() {
   const [enabledSteps, setEnabledSteps] = useState<Record<string, boolean>>({
     folding: true, binding_site: false, docking: true, admet: true, literature: false, documentation: false,
   })
+  const [stepTools, setStepTools] = useState<Record<string, string>>({
+    folding: 'alphafold3', binding_site: 'p2rank', docking: 'diffdock',
+    admet: 'admetlab', literature: 'pubmed_ai', documentation: 'fda_ind',
+  })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [runs, setRuns] = useState<PipelineRun[]>([])
-  const [activeTab, setActiveTab] = useState<'submit' | 'runs'>('submit')
+  const [activeTab, setActiveTab] = useState<'workflow' | 'submit' | 'runs'>('workflow')
   const [apiHealth, setApiHealth] = useState<'checking' | 'ok' | 'error'>('checking')
+  const [showAIAssistant, setShowAIAssistant] = useState(false)
+  const [selectedRunId, setSelectedRunId] = useState<string | undefined>(undefined)
 
   const authHeaders = useCallback(() => ({
     'Content-Type': 'application/json',
@@ -159,18 +847,19 @@ export default function Dashboard() {
     return () => clearInterval(interval)
   }, [pollRuns])
 
-  async function submitRun() {
+  async function submitRun(pipeline_config?: any) {
     if (!sequence.trim() || !token) return
     setError(null)
     setSubmitting(true)
     try {
-      const pipeline_config = STEP_NAMES.map(name => ({
-        step_name: name, enabled: enabledSteps[name] ?? false, params: {},
+      const config = pipeline_config || STEP_NAMES.map(name => ({
+        step_name: name, enabled: enabledSteps[name] ?? false,
+        params: { tool: stepTools[name] ?? '' },
       }))
       const res = await fetch(`${API}/api/pipelines`, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ name: runName, target_sequence: sequence.trim(), pipeline_config }),
+        body: JSON.stringify({ name: runName, target_sequence: sequence.trim(), pipeline_config: config }),
       })
       if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`)
       const run: PipelineRun = await res.json()
@@ -183,186 +872,125 @@ export default function Dashboard() {
     }
   }
 
-  if (!token) return <LoginForm onLogin={setToken} />
+  if (!token) return <LoginScreen onLogin={setToken} />
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-              </svg>
-            </div>
-            <span className="font-bold text-gray-900 text-lg">BioOS Dashboard</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <span className={`flex items-center gap-1.5 text-sm font-medium ${apiHealth === 'ok' ? 'text-green-600' : apiHealth === 'error' ? 'text-red-600' : 'text-yellow-600'}`}>
-              <span className={`w-2 h-2 rounded-full ${apiHealth === 'ok' ? 'bg-green-500' : apiHealth === 'error' ? 'bg-red-500' : 'bg-yellow-400 animate-pulse'}`} />
-              {apiHealth === 'ok' ? 'API Connected' : apiHealth === 'error' ? 'API Offline' : 'Checking…'}
-            </span>
-            <button onClick={() => setToken(null)} className="text-sm text-gray-500 hover:text-gray-700">Sign out</button>
-          </div>
-        </div>
-      </header>
+    <div className="flex min-h-screen bg-background">
+      <Sidebar 
+        activeTab={activeTab} 
+        setActiveTab={setActiveTab} 
+        runsCount={runs.length}
+        onOpenAI={() => setShowAIAssistant(true)}
+      />
 
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        <div className="flex gap-1 mb-8 bg-white border border-gray-200 rounded-lg p-1 w-fit">
-          {(['submit', 'runs'] as const).map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)}
-              className={`px-5 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === tab ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}>
-              {tab === 'runs' ? `Runs${runs.length > 0 ? ` (${runs.length})` : ''}` : 'Submit'}
-            </button>
-          ))}
-        </div>
+      <div className="flex-1 flex flex-col min-h-screen">
+        <TopBar
+          apiHealth={apiHealth}
+          onSignOut={() => setToken(null)}
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+        />
 
-        {activeTab === 'submit' && (
-          <div className="grid lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 space-y-5">
-              <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-                <h2 className="text-lg font-semibold text-gray-900 mb-5">Submit Pipeline Run</h2>
-
-                <div className="mb-4">
-                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Quick fill</p>
-                  <div className="flex gap-2">
+        <main className={cn(
+          "flex-1",
+          activeTab === 'workflow' ? "" : "p-6 lg:p-8 max-w-6xl w-full mx-auto"
+        )}>
+          {activeTab === 'workflow' && (
+            <div className="h-screen flex flex-col">
+              {/* Sequence Input Panel */}
+              <div className="border-b border-border bg-card/50 p-4">
+                <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-foreground">Run name</label>
+                    <Input
+                      value={runName}
+                      onChange={e => setRunName(e.target.value)}
+                      placeholder="My Pipeline Run"
+                      className="bg-background"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-medium text-foreground">
+                        Sequence <span className="text-red-400">*</span>
+                      </label>
+                      {sequence.length > 0 && (
+                        <span className="text-xs text-muted-foreground">{sequence.length} residues</span>
+                      )}
+                    </div>
+                    <Textarea
+                      value={sequence}
+                      onChange={e => setSequence(e.target.value)}
+                      rows={3}
+                      placeholder="Paste amino acid sequence..."
+                      className="font-mono text-xs bg-background resize-none"
+                    />
+                  </div>
+                </div>
+                <div className="max-w-6xl mx-auto mt-4">
+                  <div className="flex items-center gap-2">
                     {EXAMPLE_SEQUENCES.map(ex => (
-                      <button key={ex.label} onClick={() => setSequence(ex.value)}
-                        className="text-xs px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-md border border-blue-200 transition-colors">
+                      <button
+                        key={ex.label}
+                        onClick={() => setSequence(ex.value)}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-secondary/50 border border-border text-muted-foreground hover:text-foreground hover:border-emerald-500/30 hover:bg-emerald-500/5 transition-all duration-200"
+                      >
+                        <span className="mr-1">{ex.emoji}</span>
                         {ex.label}
                       </button>
                     ))}
                   </div>
                 </div>
-
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Run name</label>
-                  <input value={runName} onChange={e => setRunName(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Sequence <span className="text-red-500">*</span>
-                  </label>
-                  <textarea value={sequence} onChange={e => setSequence(e.target.value)} rows={5}
-                    placeholder="Paste amino acid sequence (standard 20 amino acids)…"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y" />
-                </div>
-
-                <div className="mb-5">
-                  <p className="text-sm font-medium text-gray-700 mb-2">Pipeline steps</p>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {STEP_NAMES.map(step => (
-                      <label key={step} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
-                        <input type="checkbox" checked={enabledSteps[step] ?? false}
-                          onChange={e => setEnabledSteps(prev => ({ ...prev, [step]: e.target.checked }))}
-                          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-                        {step.replace('_', ' ')}
-                      </label>
-                    ))}
-                  </div>
-                </div>
-
-                {error && (
-                  <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                    <strong>Error:</strong> {error}
-                  </div>
-                )}
-
-                <button onClick={submitRun} disabled={submitting || !sequence.trim() || apiHealth !== 'ok'}
-                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium py-3 rounded-lg transition-colors flex items-center justify-center gap-2">
-                  {submitting ? (
-                    <>
-                      <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
-                      Submitting…
-                    </>
-                  ) : 'Run Pipeline'}
-                </button>
+              </div>
+              
+              {/* Workflow Builder */}
+              <div className="flex-1">
+                <WorkflowBuilder
+                  onSubmitPipeline={submitRun}
+                  sequence={sequence}
+                  runName={runName}
+                  token={token || undefined}
+                />
               </div>
             </div>
-
-            <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm h-fit">
-              <h3 className="font-semibold text-gray-800 mb-3 text-sm">Steps</h3>
-              <ul className="space-y-2.5 text-sm text-gray-600">
-                {[
-                  ['folding', 'ESMFold / AlphaFold3 via Modal → Tamarind'],
-                  ['binding_site', 'Binding site identification'],
-                  ['docking', 'Molecular docking (DiffDock / Vina)'],
-                  ['admet', 'ADMET screening & drug-likeness'],
-                  ['literature', 'PubMed / ChEMBL literature search'],
-                  ['documentation', 'FDA-grade report generation'],
-                ].map(([name, desc]) => (
-                  <li key={name} className="flex gap-2">
-                    <span className={`flex-shrink-0 w-2 h-2 mt-1.5 rounded-full ${enabledSteps[name!] ? 'bg-blue-500' : 'bg-gray-300'}`} />
-                    <span>
-                      <span className="font-medium text-gray-700">{name?.replace('_', ' ')}</span>
-                      <br /><span className="text-xs">{desc}</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'runs' && (
-          <div className="space-y-4">
-            {runs.length === 0 ? (
-              <div className="bg-white rounded-xl border border-gray-200 p-12 text-center shadow-sm">
-                <p className="text-gray-500 text-sm">No runs yet.</p>
-                <button onClick={() => setActiveTab('submit')} className="mt-3 text-sm text-blue-600 hover:underline">Go to Submit →</button>
-              </div>
-            ) : runs.map(run => (
-              <div key={run.id} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-semibold text-gray-900">{run.name}</span>
-                      <StatusBadge status={run.status} />
-                    </div>
-                    <code className="text-xs text-gray-400 font-mono">{run.id}</code>
-                  </div>
-                  <span className="text-xs text-gray-400 flex-shrink-0">{new Date(run.created_at).toLocaleTimeString()}</span>
-                </div>
-
-                <p className="text-xs text-gray-500 font-mono truncate">
-                  {run.target_sequence.slice(0, 80)}{run.target_sequence.length > 80 ? '…' : ''}
-                </p>
-
-                {run.error_message && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                    <strong>Error:</strong> {run.error_message}
-                  </div>
-                )}
-
-                {run.steps.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Steps</p>
-                    {run.steps.map(step => (
-                      <div key={step.id} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
-                        <StatusBadge status={step.status} />
-                        <div className="min-w-0">
-                          <span className="text-sm font-medium text-gray-700">{step.step_name.replace('_', ' ')}</span>
-                          {step.agent_reasoning && (
-                            <p className="text-xs text-gray-500 mt-1 line-clamp-2">{step.agent_reasoning}</p>
-                          )}
-                          {step.error_message && (
-                            <p className="text-xs text-red-600 mt-1">{step.error_message}</p>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+          )}
+          {activeTab === 'submit' && (
+            <SubmitView
+              sequence={sequence}
+              setSequence={setSequence}
+              runName={runName}
+              setRunName={setRunName}
+              enabledSteps={enabledSteps}
+              setEnabledSteps={setEnabledSteps}
+              stepTools={stepTools}
+              setStepTools={setStepTools}
+              submitting={submitting}
+              error={error}
+              apiHealth={apiHealth}
+              onSubmit={() => submitRun()}
+            />
+          )}
+          {activeTab === 'runs' && (
+            <RunsView 
+              runs={runs} 
+              onGoToSubmit={() => setActiveTab('workflow')}
+              onAnalyzeWithAI={(runId) => {
+                setSelectedRunId(runId)
+                setShowAIAssistant(true)
+              }}
+            />
+          )}
+        </main>
       </div>
+
+      {/* AI Research Assistant */}
+      {showAIAssistant && token && (
+        <AIResearchAssistant
+          token={token}
+          currentRunId={selectedRunId}
+          onClose={() => setShowAIAssistant(false)}
+        />
+      )}
     </div>
   )
 }

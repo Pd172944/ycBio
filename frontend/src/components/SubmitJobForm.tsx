@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from 'react'
 import type { SequenceFormat } from '../types'
+import { PipelineBuilder, type PipelineStage } from './PipelineBuilder'
 
 interface SubmitJobFormProps {
-  onSubmit: (sequence: string, format: SequenceFormat) => Promise<void>
+  onSubmit: (sequence: string, format: SequenceFormat, pipeline?: PipelineStage[]) => Promise<void>
 }
 
 const EXAMPLE_SEQUENCES: Record<SequenceFormat, string> = {
@@ -15,6 +16,8 @@ export function SubmitJobForm({ onSubmit }: SubmitJobFormProps) {
   const [format, setFormat] = useState<SequenceFormat>('raw')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pipeline, setPipeline] = useState<PipelineStage[]>([])
+  const [showPipelineBuilder, setShowPipelineBuilder] = useState(false)
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -24,7 +27,7 @@ export function SubmitJobForm({ onSubmit }: SubmitJobFormProps) {
     setError(null)
 
     try {
-      await onSubmit(sequence.trim(), format)
+      await onSubmit(sequence.trim(), format, pipeline.length > 0 ? pipeline : undefined)
       setSequence('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit job')
@@ -125,6 +128,53 @@ export function SubmitJobForm({ onSubmit }: SubmitJobFormProps) {
           )}
         </div>
 
+        {/* Pipeline Builder Toggle */}
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowPipelineBuilder(!showPipelineBuilder)}
+            className="flex items-center justify-between w-full p-3 rounded-lg border border-border-default hover:border-border-strong transition-colors text-left"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500/10 to-purple-500/10 border border-blue-500/20 flex items-center justify-center">
+                <svg className="w-3 h-3 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18" />
+                </svg>
+              </div>
+              <div>
+                <span className="text-sm font-medium text-text-primary">
+                  Customize Pipeline
+                </span>
+                <p className="text-xs text-text-muted mt-0.5">
+                  {pipeline.length > 0 
+                    ? `${pipeline.length} stages configured`
+                    : 'Use default pipeline or customize stages'
+                  }
+                </p>
+              </div>
+            </div>
+            <svg 
+              className={`w-4 h-4 text-text-muted transition-transform ${showPipelineBuilder ? 'rotate-180' : ''}`}
+              fill="none" 
+              viewBox="0 0 24 24" 
+              stroke="currentColor" 
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Pipeline Builder */}
+        {showPipelineBuilder && (
+          <div className="animate-fade-in">
+            <PipelineBuilder
+              onPipelineChange={setPipeline}
+              className="border border-border-default rounded-lg p-4 bg-bg-secondary/20"
+            />
+          </div>
+        )}
+
         {/* Error */}
         {error && (
           <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3">
@@ -136,7 +186,12 @@ export function SubmitJobForm({ onSubmit }: SubmitJobFormProps) {
         {/* Submit */}
         <div className="flex items-center justify-between pt-1">
           <p className="text-xs text-text-muted">
-            Pipeline: <span className="text-text-secondary font-mono">default</span>
+            Pipeline: <span className="text-text-secondary font-mono">
+              {pipeline.length > 0 
+                ? pipeline.map(s => s.name.toLowerCase()).join(' → ')
+                : 'default'
+              }
+            </span>
           </p>
           <button
             type="submit"
