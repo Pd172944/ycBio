@@ -73,3 +73,51 @@ export interface Job {
   // Local tracking
   submitted_at: string
 }
+
+// ---------------------------------------------------------------------------
+// Batch analysis types
+// ---------------------------------------------------------------------------
+
+export interface MutationVariant {
+  label: string
+  sequence: string
+  job_id: string | null
+  status: string
+  moe_report: MoEReport | null
+}
+
+export interface RankingEntry {
+  label: string
+  plddt_delta: number | null
+  impact: 'stabilizing' | 'neutral' | 'destabilizing'
+  notes: string
+}
+
+export interface ComparatorReport {
+  summary: string
+  rankings: RankingEntry[]
+  recommendation: string
+  caveats: string[]
+}
+
+export interface Batch {
+  batch_id: string
+  wildtype_sequence: string
+  variants: MutationVariant[]
+  status: string
+  comparator_report: ComparatorReport | null
+  created_at: string
+}
+
+export interface BatchCreateRequest {
+  wildtype: string
+  mutations: string[]
+  pipeline_id: string
+}
+
+export interface BatchCreateResponse {
+  batch_id: string
+  variant_count: number
+  status: string
+}
+

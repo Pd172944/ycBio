@@ -1,4 +1,11 @@
-import type { Job, SubmitJobRequest, SubmitJobResponse } from '../types'
+import type {
+  Batch,
+  BatchCreateRequest,
+  BatchCreateResponse,
+  Job,
+  SubmitJobRequest,
+  SubmitJobResponse,
+} from '../types'
 
 const BASE_URL = 'http://localhost:8000'
 
@@ -34,4 +41,13 @@ export const api = {
 
   getPipelineTemplates: () =>
     request('/pipelines/templates'),
+
+  submitBatch: (body: BatchCreateRequest): Promise<BatchCreateResponse> =>
+    request<BatchCreateResponse>('/batches', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  getBatch: (batchId: string): Promise<Batch> =>
+    request<Batch>(`/batches/${batchId}`),
 }

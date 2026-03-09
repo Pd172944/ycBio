@@ -4,6 +4,8 @@ BioSync Orchestrator — FastAPI application entry point.
 Endpoints:
   POST /jobs                     Create and enqueue a new pipeline job
   GET  /jobs/{job_id}            Poll job status and retrieve results
+  POST /batches                  Submit a mutation batch analysis
+  GET  /batches/{batch_id}       Poll batch status and retrieve comparative report
   GET  /pipelines/tools          List available pipeline tools
   GET  /pipelines/templates      List pipeline templates
   GET  /health                   Health check
@@ -23,10 +25,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.integrations.pipeline_registry import get_registry
 from app.integrations.redis_store import RedisStore
+from app.moe.comparator import run_comparator
 from app.orchestrator.graph import run_pipeline
-from app.orchestrator.state import SequenceInput
+from app.orchestrator.state import MoEReport, MutationVariant, SequenceInput
 from app.orchestrator.tools import run_moe_analysis
+from app.utils.mutations import apply_mutation
 from app.validation.schemas import JobCreateRequest
+from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -174,20 +179,140 @@ async def _modal_poller(store: RedisStore) -> None:
                     await store.fail_job(job_id, str(exc))
 
 
+_BATCH_POLL_INTERVAL_SECONDS = 30
+
+
+class BatchCreateRequest(BaseModel):
+    wildtype: str = Field(..., min_length=1)
+    mutations: list[str] = Field(..., min_length=1)
+    pipeline_id: str = Field(default="default")
+
+
+async def _batch_poller(store: RedisStore) -> None:
+    """
+    Background asyncio task that polls Redis every 30 seconds for batches where
+    all variants are complete but the comparator report has not yet run.
+    """
+    bound_log = log.bind(component="batch_poller")
+    await bound_log.ainfo("batch_poller_started", interval=_BATCH_POLL_INTERVAL_SECONDS)
+
+    while True:
+        await asyncio.sleep(_BATCH_POLL_INTERVAL_SECONDS)
+
+        try:
+            batches = await store.get_all_batches(limit=100)
+        except Exception as exc:
+            await bound_log.aerror("batch_poller_redis_scan_failed", error=str(exc))
+            continue
+
+        pending_batches = [
+            b for b in batches
+            if b.get("status") == "running" and b.get("comparator_report") is None
+        ]
+
+        for batch in pending_batches:
+            batch_id: str = batch["batch_id"]
+            batch_log = log.bind(batch_id=batch_id, component="batch_poller")
+            variants: list[dict] = batch.get("variants", [])
+
+            all_done = True
+            any_failed = False
+            updated_variants: list[dict] = []
+
+            for variant in variants:
+                job_id = variant.get("job_id")
+                current_status = variant.get("status", "pending")
+
+                if current_status in ("complete", "failed"):
+                    updated_variants.append(variant)
+                    if current_status == "failed":
+                        any_failed = True
+                    continue
+
+                if not job_id:
+                    all_done = False
+                    updated_variants.append(variant)
+                    continue
+
+                try:
+                    job_state = await store.get_job(job_id)
+                    if job_state is None:
+                        all_done = False
+                        updated_variants.append(variant)
+                        continue
+
+                    job_status = job_state.get("status", "pending")
+                    if job_status == "complete":
+                        moe_report_dict = job_state.get("moe_report")
+                        variant = {**variant, "status": "complete", "moe_report": moe_report_dict}
+                    elif job_status == "failed":
+                        variant = {**variant, "status": "failed"}
+                        any_failed = True
+                    else:
+                        all_done = False
+
+                    updated_variants.append(variant)
+
+                except Exception as exc:
+                    await batch_log.aerror("batch_poller_job_fetch_failed", job_id=job_id, error=str(exc))
+                    all_done = False
+                    updated_variants.append(variant)
+
+            # Persist updated variant statuses
+            try:
+                await store.update_batch(batch_id, {"variants": updated_variants})
+            except Exception as exc:
+                await batch_log.aerror("batch_poller_update_failed", error=str(exc))
+                continue
+
+            if not all_done:
+                continue
+
+            # All variants done — run comparator
+            try:
+                reports: dict[str, MoEReport] = {}
+                for v in updated_variants:
+                    moe_dict = v.get("moe_report")
+                    if moe_dict and v.get("status") == "complete":
+                        reports[v["label"]] = MoEReport(**moe_dict)
+
+                if len(reports) >= 2 and "wildtype" in reports:
+                    comparator_output = await run_comparator(reports)
+                    comparator_dict = comparator_output.model_dump()
+                else:
+                    comparator_dict = None
+
+                final_status = "failed" if any_failed else "complete"
+                await store.update_batch(batch_id, {
+                    "status": final_status,
+                    "comparator_report": comparator_dict,
+                })
+                await batch_log.ainfo("batch_poller_complete", status=final_status)
+
+            except Exception as exc:
+                await batch_log.aerror("batch_poller_comparator_failed", error=str(exc))
+                await store.update_batch(batch_id, {"status": "failed"})
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[type-arg]
     await log.ainfo("biosync_startup")
     poller_store = get_store()
+    batch_store = get_store()
     poller_task = asyncio.create_task(_modal_poller(poller_store))
+    batch_poller_task = asyncio.create_task(_batch_poller(batch_store))
     try:
         yield
     finally:
         poller_task.cancel()
-        try:
-            await poller_task
-        except asyncio.CancelledError:
-            pass
+        batch_poller_task.cancel()
+        for t in (poller_task, batch_poller_task):
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
         await poller_store.close()
+        await batch_store.close()
         await log.ainfo("biosync_shutdown")
 
 
@@ -517,6 +642,90 @@ async def download_moe_report(job_id: str) -> Any:
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="moe_report_{job_id[:8]}.json"'},
     )
+
+# ---------------------------------------------------------------------------
+# Batch mutation analysis endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/batches", status_code=202)
+async def create_batch(body: BatchCreateRequest, background_tasks: BackgroundTasks) -> dict:
+    """
+    Submit a batch mutation analysis.
+    Creates one job per variant (wildtype + each mutation) and stores them as a BatchState.
+    The batch_poller background task monitors all variant jobs and runs the comparator
+    when all variants are done.
+    """
+    wildtype = body.wildtype.strip().upper()
+
+    # Build variant list: wildtype first, then each mutation
+    variants: list[MutationVariant] = []
+    variant_specs: list[tuple[str, str]] = [("wildtype", wildtype)]  # (label, sequence)
+
+    for mutation_str in body.mutations:
+        try:
+            mutant_seq = apply_mutation(wildtype, mutation_str.strip())
+            variant_specs.append((mutation_str.strip(), mutant_seq))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    for label, sequence in variant_specs:
+        variants.append(MutationVariant(label=label, sequence=sequence, status="pending"))
+
+    # Create the batch record in Redis
+    batch_id = str(uuid.uuid4())
+    store = get_store()
+    try:
+        await store.create_batch(batch_id, wildtype, variants)
+    finally:
+        await store.close()
+
+    # Submit a pipeline job for each variant
+    for i, (label, sequence) in enumerate(variant_specs):
+        job_id = str(uuid.uuid4())
+        seq_input = SequenceInput(sequence=sequence)
+
+        # Update variant with job_id in Redis
+        store2 = get_store()
+        try:
+            await store2.create_job(job_id, seq_input, pipeline_id=body.pipeline_id)
+            await store2.update_variant_in_batch(batch_id, label, {"job_id": job_id, "status": "running"})
+        finally:
+            await store2.close()
+
+        # Run pipeline in background
+        async def _run_variant(jid: str = job_id, seq: str = sequence) -> None:
+            variant_store = get_store()
+            try:
+                initial: dict = {
+                    "job_id": jid,
+                    "status": "pending",
+                    "pipeline_id": body.pipeline_id,
+                    "sequence_input": SequenceInput(sequence=seq).model_dump(),
+                }
+                await run_pipeline(initial, variant_store)
+            finally:
+                await variant_store.close()
+
+        background_tasks.add_task(_run_variant)
+
+    await log.ainfo("batch_created", batch_id=batch_id, variant_count=len(variants))
+    return {"batch_id": batch_id, "variant_count": len(variants), "status": "running"}
+
+
+@app.get("/batches/{batch_id}")
+async def get_batch(batch_id: str) -> Any:
+    """Return the current batch state including all variant statuses and comparator report."""
+    store = get_store()
+    try:
+        state = await store.get_batch(batch_id)
+    finally:
+        await store.close()
+
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"Batch {batch_id!r} not found")
+
+    return state
 
 
 @app.get("/pipelines/tools")

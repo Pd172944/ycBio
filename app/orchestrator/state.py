@@ -95,6 +95,32 @@ JobStatus = Literal[
 ]
 
 
+class ComparatorOutput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    summary: str
+    rankings: list[dict] = Field(default_factory=list)
+    recommendation: str
+    caveats: list[str] = Field(default_factory=list)
+
+
+class MutationVariant(BaseModel):
+    label: str
+    sequence: str
+    job_id: str | None = None
+    status: str = "pending"
+    moe_report: MoEReport | None = None
+
+
+class BatchState(BaseModel):
+    batch_id: str
+    wildtype_sequence: str
+    variants: list[MutationVariant]
+    status: Literal["pending", "running", "complete", "failed"] = "pending"
+    comparator_report: dict | None = None
+    created_at: str
+
+
 class JobState(dict):  # TypedDict-compatible for LangGraph
     """
     Mutable job state persisted in Redis and threaded through LangGraph nodes.

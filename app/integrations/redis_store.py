@@ -13,9 +13,11 @@ import structlog
 
 from app.orchestrator.state import (
     AuditResult,
+    BatchState,
     JobStatus,
     ModalJobHandle,
     MoEReport,
+    MutationVariant,
     SequenceInput,
     ValidationResult,
 )
@@ -25,6 +27,9 @@ log = structlog.get_logger()
 
 _JOB_PREFIX = "biosync:job:"
 _JOB_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 days
+
+_BATCH_PREFIX = "biosync:batch:"
+_BATCH_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 days
 
 
 def _job_key(job_id: str) -> str:
@@ -154,6 +159,108 @@ class RedisStore:
 
         # Sort by creation order is not tracked; return as-is up to limit
         return jobs[-limit:]
+
+    # ------------------------------------------------------------------
+    # Batch methods
+    # ------------------------------------------------------------------
+
+    def _batch_key(self, batch_id: str) -> str:
+        return f"{_BATCH_PREFIX}{batch_id}"
+
+    async def create_batch(
+        self,
+        batch_id: str,
+        wildtype: str,
+        variants: list[MutationVariant],
+    ) -> None:
+        """Store a new BatchState in Redis with a 7-day TTL."""
+        from datetime import datetime, timezone
+
+        state = BatchState(
+            batch_id=batch_id,
+            wildtype_sequence=wildtype,
+            variants=variants,
+            status="running",
+            comparator_report=None,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        await self._redis.setex(
+            self._batch_key(batch_id),
+            _BATCH_TTL_SECONDS,
+            state.model_dump_json(),
+        )
+        await log.ainfo("batch_created", batch_id=batch_id, variant_count=len(variants))
+
+    async def get_batch(self, batch_id: str) -> dict | None:
+        """Retrieve batch state dict. Returns None if not found."""
+        raw = await self._redis.get(self._batch_key(batch_id))
+        if raw is None:
+            return None
+        return cast(dict, json.loads(raw))
+
+    async def update_batch(self, batch_id: str, updates: dict) -> None:
+        """Merge top-level updates into existing batch state and refresh TTL."""
+        state = await self.get_batch(batch_id)
+        if state is None:
+            raise KeyError(f"Batch {batch_id!r} not found in Redis")
+        state.update(updates)
+        await self._redis.setex(
+            self._batch_key(batch_id),
+            _BATCH_TTL_SECONDS,
+            json.dumps(state),
+        )
+
+    async def update_variant_in_batch(
+        self, batch_id: str, label: str, updates: dict
+    ) -> None:
+        """Update a specific variant (by label) inside a batch's variants list."""
+        state = await self.get_batch(batch_id)
+        if state is None:
+            raise KeyError(f"Batch {batch_id!r} not found in Redis")
+
+        variants: list[dict] = state.get("variants", [])
+        for variant in variants:
+            if variant.get("label") == label:
+                variant.update(updates)
+                break
+        else:
+            raise KeyError(f"Variant {label!r} not found in batch {batch_id!r}")
+
+        state["variants"] = variants
+        await self._redis.setex(
+            self._batch_key(batch_id),
+            _BATCH_TTL_SECONDS,
+            json.dumps(state),
+        )
+        await log.ainfo("batch_variant_updated", batch_id=batch_id, label=label)
+
+    async def get_all_batches(self, limit: int = 50) -> list[dict]:
+        """Return recent batch states by scanning Redis for batch keys."""
+        cursor: int = 0
+        keys: list[str] = []
+        while True:
+            cursor, batch_keys = await self._redis.scan(
+                cursor=cursor,
+                match=f"{_BATCH_PREFIX}*",
+                count=100,
+            )
+            keys.extend(batch_keys)
+            if cursor == 0:
+                break
+
+        if not keys:
+            return []
+
+        raw_values = await self._redis.mget(*keys)
+        batches = []
+        for raw in raw_values:
+            if raw:
+                try:
+                    batches.append(json.loads(raw))
+                except json.JSONDecodeError:
+                    pass
+
+        return batches[-limit:]
 
     async def close(self) -> None:
         await self._redis.aclose()
