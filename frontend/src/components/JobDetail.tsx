@@ -1,6 +1,7 @@
 import type { Job } from '../types'
 import { StatusBadge } from './StatusBadge'
 import { MoEReport } from './MoEReport'
+import { RawOutputPanel } from './RawOutputPanel'
 
 interface JobDetailProps {
   job: Job
@@ -36,14 +37,13 @@ function ProgressStepper({ status }: { status: string }) {
           <div key={step} className="flex items-center gap-1">
             <div
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-all
-                ${
-                  isFailed && step === 'complete'
-                    ? 'bg-red-500/10 text-red-400'
-                    : isPast
+                ${isFailed && step === 'complete'
+                  ? 'bg-red-500/10 text-red-400'
+                  : isPast
                     ? 'bg-emerald-500/10 text-emerald-400'
                     : isCurrent
-                    ? 'bg-blue-500/10 text-blue-400 ring-1 ring-blue-500/30'
-                    : 'bg-bg-secondary text-text-muted'
+                      ? 'bg-blue-500/10 text-blue-400 ring-1 ring-blue-500/30'
+                      : 'bg-bg-secondary text-text-muted'
                 }`}
             >
               {isPast && (
@@ -172,10 +172,17 @@ export function JobDetail({ job, onClose }: JobDetailProps) {
           <MoEReport report={job.moe_report} modalOutput={job.modal_output} />
         )}
 
+        {/* Complete: Raw Output Panel (scores table + downloads) */}
+        {job.status === 'complete' && (
+          <div className="mt-6">
+            <RawOutputPanel jobId={job.job_id} modalOutput={job.modal_output} />
+          </div>
+        )}
+
         {/* Complete but no report */}
         {job.status === 'complete' && !job.moe_report && (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <p className="text-text-muted text-sm">Job complete but no report data available.</p>
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <p className="text-text-muted text-sm">No expert analysis available for this job.</p>
           </div>
         )}
       </div>

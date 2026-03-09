@@ -40,4 +40,11 @@ Pipeline Configuration:
 {pipeline_config}
 
 Begin execution and coordinate all sub-agents to complete this pipeline. Ensure each step is properly tracked and all results are preserved for reproducibility.
+"""eline Name: {pipeline_name}
+Run ID: {run_id}
+
+Pipeline Configuration:
+{pipeline_config}
+
+Begin execution and coordinate all sub-agents to complete this pipeline. Ensure each step is properly tracked and all results are preserved for reproducibility.
 """

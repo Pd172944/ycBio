@@ -44,7 +44,7 @@ class StatisticianOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     confidence_score: float = Field(..., ge=0.0, le=1.0)
-    metrics: dict[str, float] = Field(default_factory=dict)
+    metrics: dict[str, float | None] = Field(default_factory=dict)
     interpretation: str
 
 

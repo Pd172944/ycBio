@@ -132,7 +132,13 @@ async def trigger_modal_job(job_id: str, sequence: str) -> ModalJobHandle:
         import modal  # type: ignore[import-untyped]
 
         fn = modal.Function.from_name("biosync-orchestrator", "run_inference")
-        call = await fn.spawn.aio(sequence=sequence, job_id=job_id)
+        call = await fn.spawn.aio(
+            sequence=sequence,
+            job_id=job_id,
+            num_models="1",      # 1 model instead of 5 — 5x faster
+            num_recycles=1,       # fewer refinement cycles
+            use_msa=False,        # skip MSA — main bottleneck (~10min saved)
+        )
 
         handle = ModalJobHandle(
             modal_call_id=call.object_id,

@@ -72,7 +72,7 @@ async def create_pipeline_run(
             run_id=pipeline_run.id,
             step_name=config_step.step_name,
             status=StepStatus.PENDING,
-            metadata=config_step.params
+            step_metadata=config_step.params
         )
         db.add(step)
     
