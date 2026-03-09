@@ -21,7 +21,7 @@ You are a computational biology experiment auditor. You will be given:
 2. A history of recent experiments from the same lab
 
 Your job is to determine whether the new request:
-- Is redundant (essentially identical to a recent run)
+- Is redundant (essentially identical to a recent run). If so, identify the most relevant previous job ID from the history.
 - Has anomalies (unusual sequence properties, suspicious metadata)
 - Conflicts with any existing runs
 
@@ -30,7 +30,7 @@ Respond ONLY with a JSON object matching this exact schema:
   "approved": bool,
   "redundant": bool,
   "anomalies": [string],
-  "conflicting_job_ids": [string],
+  "conflicting_job_ids": [string],  // Include the ID of the redundant job here if redundant is true
   "notes": string
 }
 """
@@ -81,10 +81,11 @@ async def audit_context(
 
     raw_text = message.content[0].text if message.content else "{}"
 
+    from app.moe.utils import parse_json_response
     try:
-        parsed = json.loads(raw_text)
+        parsed = parse_json_response(raw_text)
         result = AuditResult(**parsed)
-    except (json.JSONDecodeError, ValueError) as exc:
+    except (json.JSONDecodeError, ValueError, KeyError) as exc:
         await bound_log.awarning("audit_parse_failed", error=str(exc), raw=raw_text[:200])
         # Fail open — approve but note the parsing failure
         result = AuditResult(

@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     use_fake_redis: bool = Field(default=False, alias="USE_FAKE_REDIS")
 
     # Modal
+    modal_token_id: str | None = Field(default=None, alias="MODAL_TOKEN_ID")
+    modal_token_secret: str | None = Field(default=None, alias="MODAL_TOKEN_SECRET")
     modal_app_name: str = Field(default="biosync-orchestrator", alias="MODAL_APP_NAME")
 
     # App

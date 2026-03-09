@@ -58,6 +58,8 @@ async def node_audit(state: dict) -> dict:
 
     await bound_log.ainfo("node_audit_start")
     history = await store.get_recent_jobs(limit=50)
+    # Exclude the current job from history to prevent self-detection as redundant
+    history = [h for h in history if h.get("job_id") != job_id]
 
     audit_result = await audit_context(
         {
@@ -68,6 +70,22 @@ async def node_audit(state: dict) -> dict:
         },
         history,
     )
+
+    if audit_result.redundant and audit_result.conflicting_job_ids:
+        # Attempt to reuse results from a past identical job
+        old_job_id = audit_result.conflicting_job_ids[0]
+        old_state = await store.get_job(old_job_id)
+        
+        if old_state and old_state.get("status") == "complete":
+            await bound_log.ainfo("redundancy_detected_reusing_results", old_job_id=old_job_id)
+            return {
+                **state,
+                "status": "complete",
+                "audit_result": audit_result,
+                "modal_output": old_state.get("modal_output"),
+                "moe_report": old_state.get("moe_report"),
+                "notes": f"Results reused from redundant job {old_job_id}. {audit_result.notes}"
+            }
 
     if not audit_result.approved:
         await bound_log.awarning("audit_rejected", notes=audit_result.notes)
@@ -108,7 +126,11 @@ def route_after_validate(state: dict) -> str:
 
 
 def route_after_audit(state: dict) -> str:
-    return "failed" if state.get("status") == "failed" else "dispatch_modal"
+    if state.get("status") == "failed":
+        return "failed"
+    if state.get("status") == "complete":
+        return END
+    return "dispatch_modal"
 
 
 def route_after_dispatch(state: dict) -> str:
@@ -134,7 +156,7 @@ def build_graph() -> StateGraph:
         "validate", route_after_validate, {"audit": "audit", "failed": END}
     )
     graph.add_conditional_edges(
-        "audit", route_after_audit, {"dispatch_modal": "dispatch_modal", "failed": END}
+        "audit", route_after_audit, {"dispatch_modal": "dispatch_modal", "failed": END, END: END}
     )
     graph.add_conditional_edges(
         "dispatch_modal", route_after_dispatch, {END: END, "failed": END}
@@ -168,7 +190,19 @@ async def run_pipeline(initial_state: dict, store: RedisStore) -> dict:
     try:
         graph = _make_compiled_graph()
         final_state = await graph.ainvoke(state)
-        await store.update_status(job_id, final_state.get("status", "complete"))
+        final_status = final_state.get("status", "complete")
+        await store.update_status(job_id, final_status)
+
+        # Persist reused results (e.g. from redundancy shortcut) to Redis
+        if final_status == "complete":
+            updates: dict = {}
+            if final_state.get("moe_report") is not None:
+                updates["moe_report"] = final_state["moe_report"]
+            if final_state.get("modal_output") is not None:
+                updates["modal_output"] = final_state["modal_output"]
+            if updates:
+                await store.update_job(job_id, updates)
+                await bound_log.ainfo("pipeline_persisted_reused_results", keys=list(updates.keys()))
     except Exception as exc:
         await bound_log.aerror("pipeline_error", error=str(exc), exc_info=True)
         await store.fail_job(job_id, str(exc))

@@ -60,6 +60,14 @@ function PLDDTBar({ name, score }: { name: string; score: number }) {
 }
 
 export function MoEReport({ report, modalOutput }: MoEReportProps) {
+  if (!report || !report.synthesizer || !report.statistician || !report.critic) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <p className="text-text-muted text-sm">Report data is incomplete.</p>
+      </div>
+    )
+  }
+
   const { statistician, critic, synthesizer } = report
   const severityColors: Record<string, string> = {
     low: 'text-emerald-400',
@@ -196,7 +204,7 @@ export function MoEReport({ report, modalOutput }: MoEReportProps) {
       </div>
 
       {/* pLDDT Scores */}
-      {modalOutput && modalOutput.per_model_scores.length > 0 && (
+      {modalOutput && modalOutput.per_model_scores && modalOutput.per_model_scores.length > 0 && (
         <div>
           <SectionHeading>pLDDT Scores by Model</SectionHeading>
           <div className="card p-5 space-y-3">
@@ -224,12 +232,14 @@ export function MoEReport({ report, modalOutput }: MoEReportProps) {
                 score={s.plddt_mean}
               />
             ))}
-            <div className="pt-3 border-t border-border-subtle flex items-center justify-between">
-              <span className="text-xs text-text-muted">Best pLDDT mean</span>
-              <span className="font-mono text-sm font-semibold text-emerald-400">
-                {modalOutput.best_plddt_mean.toFixed(2)}
-              </span>
-            </div>
+            {typeof modalOutput.best_plddt_mean === 'number' && (
+              <div className="pt-3 border-t border-border-subtle flex items-center justify-between">
+                <span className="text-xs text-text-muted">Best pLDDT mean</span>
+                <span className="font-mono text-sm font-semibold text-emerald-400">
+                  {modalOutput.best_plddt_mean.toFixed(2)}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}

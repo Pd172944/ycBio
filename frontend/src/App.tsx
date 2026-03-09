@@ -5,7 +5,7 @@ import { api } from './api/client'
 import { SubmitJobForm } from './components/SubmitJobForm'
 import { JobCard } from './components/JobCard'
 import { JobDetail } from './components/JobDetail'
-import { VisualPipelineBuilder } from './components/VisualPipelineBuilder'
+import { VisualPipelineBuilder, type CanvasStage } from './components/VisualPipelineBuilder'
 
 const STORAGE_KEY = 'biosync_jobs'
 const POLL_INTERVAL_MS = 10_000
@@ -303,7 +303,18 @@ export default function App() {
         ) : (
           /* Pipeline Builder View */
           <div className="flex-1">
-            <VisualPipelineBuilder />
+            <VisualPipelineBuilder
+              onRunAnalysis={(sequence, format, canvasStages: CanvasStage[]) => {
+                const pipeline: PipelineStage[] = canvasStages.map((s) => ({
+                  id: s.id,
+                  name: s.name,
+                  description: s.description,
+                  icon: s.icon,
+                }))
+                handleSubmit(sequence, format, pipeline)
+                setCurrentView('jobs')
+              }}
+            />
           </div>
         )}
       </div>

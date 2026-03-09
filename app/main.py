@@ -52,6 +52,21 @@ log = structlog.get_logger()
 
 
 # ---------------------------------------------------------------------------
+# App initialization and settings
+# ---------------------------------------------------------------------------
+
+from app.settings import get_settings
+import os
+
+settings = get_settings()
+if settings.modal_token_id:
+    os.environ["MODAL_TOKEN_ID"] = settings.modal_token_id
+if settings.modal_token_secret:
+    os.environ["MODAL_TOKEN_SECRET"] = settings.modal_token_secret
+if settings.anthropic_api_key:
+    os.environ["ANTHROPIC_API_KEY"] = settings.anthropic_api_key
+
+# ---------------------------------------------------------------------------
 # App lifecycle
 # ---------------------------------------------------------------------------
 
@@ -110,6 +125,11 @@ async def _modal_poller(store: RedisStore) -> None:
                     fc = modal.FunctionCall.from_id(call_id)
                     raw_output = await fc.get.aio(timeout=_MODAL_POLL_TIMEOUT_SECONDS)
 
+                # If function finished but metrics are missing, log a warning and proceed
+                # instead of looping infinitely (since fc.get() result is persistent).
+                if not raw_output or ("best_plddt_mean" not in raw_output and not raw_output.get("mock")):
+                    await job_log.awarning("poller_modal_result_incomplete", call_id=call_id, keys=list(raw_output.keys()) if raw_output else [])
+                
                 await job_log.ainfo("poller_modal_result_received")
                 raw_output["job_id"] = job_id
 
@@ -271,6 +291,124 @@ async def get_job(job_id: str) -> dict[str, Any]:
     # Strip internal keys before returning
     state.pop("_store", None)
     return state
+
+
+@app.get("/jobs/{job_id}/download/structure")
+async def download_structure(job_id: str) -> Any:
+    """
+    Fetch a fresh presigned download URL from Tamarind and redirect the browser to it.
+    The download is a ZIP archive containing all PDB structure files and score JSONs
+    produced by AlphaFold / ESMFold / the configured model.
+    """
+    from fastapi.responses import RedirectResponse
+    import httpx
+
+    store = get_store()
+    try:
+        state = await store.get_job(job_id)
+    finally:
+        await store.close()
+
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id!r} not found")
+
+    modal_output = state.get("modal_output") or {}
+    tamarind_job_name = modal_output.get("tamarind_job_name")
+
+    if not tamarind_job_name:
+        raise HTTPException(
+            status_code=404,
+            detail="No Tamarind job name found — structure files unavailable for this job (may be a mock run).",
+        )
+
+    _settings = get_settings()
+    tamarind_key = _settings.tamarind_api_key
+    tamarind_base = _settings.tamarind_api_base_url
+    if not tamarind_base.endswith("/"):
+        tamarind_base += "/"
+
+    await log.ainfo("structure_download_requested", job_id=job_id, tamarind_job_name=tamarind_job_name)
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{tamarind_base}result",
+                headers={"x-api-key": tamarind_key},
+                json={"jobName": tamarind_job_name},
+            )
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Tamarind API error: {exc}") from exc
+
+    presigned_url = resp.text.replace('"', '').strip()
+    if not presigned_url.startswith("https://"):
+        raise HTTPException(
+            status_code=404,
+            detail="Structure files not yet available — Tamarind job may still be processing.",
+        )
+
+    # Redirect the browser directly to the S3 presigned URL (downloads zip)
+    return RedirectResponse(url=presigned_url, status_code=302)
+
+
+@app.get("/jobs/{job_id}/download/raw-output")
+async def download_raw_output(job_id: str) -> Any:
+    """
+    Download the full raw output from the AlphaFold/Tamarind pipeline as a JSON file.
+    Includes per-model pLDDT scores, PAE, PTM, and configuration metadata.
+    """
+    from fastapi.responses import JSONResponse
+
+    store = get_store()
+    try:
+        state = await store.get_job(job_id)
+    finally:
+        await store.close()
+
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id!r} not found")
+
+    modal_output = state.get("modal_output")
+    if not modal_output:
+        raise HTTPException(status_code=404, detail="Raw output not yet available for this job")
+
+    import json
+    from fastapi.responses import Response
+    content = json.dumps(modal_output, indent=2)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="raw_output_{job_id[:8]}.json"'},
+    )
+
+
+@app.get("/jobs/{job_id}/download/moe-report")
+async def download_moe_report(job_id: str) -> Any:
+    """
+    Download the full MoE expert analysis report as a JSON file.
+    Includes statistician, critic, and synthesizer outputs.
+    """
+    store = get_store()
+    try:
+        state = await store.get_job(job_id)
+    finally:
+        await store.close()
+
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id!r} not found")
+
+    moe_report = state.get("moe_report")
+    if not moe_report:
+        raise HTTPException(status_code=404, detail="MoE report not yet available for this job")
+
+    import json
+    from fastapi.responses import Response
+    content = json.dumps(moe_report, indent=2)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="moe_report_{job_id[:8]}.json"'},
+    )
 
 
 @app.get("/pipelines/tools")
