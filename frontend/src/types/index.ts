@@ -56,6 +56,7 @@ export interface PerModelScore {
 
 export interface ModalOutput {
   best_plddt_mean: number
+  best_pdb_content?: string | null
   per_model_scores: PerModelScore[]
 }
 

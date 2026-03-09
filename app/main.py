@@ -111,10 +111,23 @@ async def _modal_poller(store: RedisStore) -> None:
 
                 if getattr(settings, "mock_modal", False) or call_id.startswith("mock-"):
                     await job_log.awarning("poller_mock_modal_complete")
+                    _mock_pdb = (
+                        "HEADER    MOCK ALPHAFOLD STRUCTURE\n"
+                        "ATOM      1  N   ALA A   1      1.000   1.000   1.000  1.00 50.00           N  \n"
+                        "ATOM      2  CA  ALA A   1      1.537   2.326   1.000  1.00 55.00           C  \n"
+                        "ATOM      3  C   ALA A   1      2.924   2.236   1.622  1.00 60.00           C  \n"
+                        "ATOM      4  O   ALA A   1      3.845   3.067   1.399  1.00 65.00           O  \n"
+                        "ATOM      5  CB  ALA A   1      0.613   3.393   1.543  1.00 70.00           C  \n"
+                        "ATOM      6  N   GLY A   2      3.085   1.188   2.447  1.00 72.00           N  \n"
+                        "ATOM      7  CA  GLY A   2      4.378   1.014   3.095  1.00 75.00           C  \n"
+                        "ATOM      8  C   GLY A   2      5.396   2.126   2.810  1.00 78.00           C  \n"
+                        "ATOM      9  O   GLY A   2      6.597   1.924   2.975  1.00 80.00           O  \n"
+                        "TER\nEND\n"
+                    )
                     raw_output: dict[str, Any] = {
                         "job_id": job_id,
                         "sequence_length": 16,
-                        "pdb_string": "MOCK_PDB_DATA",
+                        "best_pdb_content": _mock_pdb,
                         "confidence": 0.87,
                         "plddt_scores": [0.85, 0.88, 0.91, 0.87, 0.83],
                         "mock": True,
@@ -349,6 +362,101 @@ async def download_structure(job_id: str) -> Any:
 
     # Redirect the browser directly to the S3 presigned URL (downloads zip)
     return RedirectResponse(url=presigned_url, status_code=302)
+
+
+@app.get("/jobs/{job_id}/structure/pdb-content")
+async def get_pdb_content(job_id: str) -> Any:
+    """
+    Return the best-ranked PDB structure as plain text for inline 3D visualization.
+    Used by the MoleculeViewer frontend component (3Dmol.js).
+
+    Strategy:
+      1. Return cached best_pdb_content from Redis if present (fast path).
+      2. Otherwise fetch the ZIP from Tamarind, extract rank-1 PDB, cache it, return it.
+    """
+    import io
+    import zipfile
+    import httpx
+    from fastapi.responses import Response
+
+    store = get_store()
+    try:
+        state = await store.get_job(job_id)
+    finally:
+        await store.close()
+
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id!r} not found")
+
+    modal_output = state.get("modal_output") or {}
+
+    # Fast path — already cached from the original inference run
+    cached_pdb = modal_output.get("best_pdb_content")
+    if cached_pdb:
+        return Response(
+            content=cached_pdb,
+            media_type="text/plain",
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
+
+    # Slow path — fetch ZIP from Tamarind and extract rank-1 PDB on the fly
+    tamarind_job_name = modal_output.get("tamarind_job_name")
+    if not tamarind_job_name:
+        raise HTTPException(
+            status_code=404,
+            detail="No structure available — job may be a mock run or still processing.",
+        )
+
+    _settings = get_settings()
+    tamarind_key = _settings.tamarind_api_key
+    tamarind_base = _settings.tamarind_api_base_url
+    if not tamarind_base.endswith("/"):
+        tamarind_base += "/"
+
+    try:
+        # 1. Get presigned URL
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{tamarind_base}result",
+                headers={"x-api-key": tamarind_key},
+                json={"jobName": tamarind_job_name},
+            )
+        resp.raise_for_status()
+        presigned_url = resp.text.replace('"', '').strip()
+        if not presigned_url.startswith("https://"):
+            raise HTTPException(status_code=404, detail="Structure files not yet available from Tamarind.")
+
+        # 2. Download ZIP
+        async with httpx.AsyncClient(timeout=120) as client:
+            dl = await client.get(presigned_url)
+        dl.raise_for_status()
+
+        # 3. Extract best PDB (rank_001 preferred)
+        pdb_text: str | None = None
+        with zipfile.ZipFile(io.BytesIO(dl.content)) as zf:
+            names = zf.namelist()
+            pdb_names = [n for n in names if n.lower().endswith(".pdb")]
+            # Prefer rank_001
+            rank1 = [n for n in pdb_names if "rank_001" in n or "rank_1_" in n]
+            chosen = rank1[0] if rank1 else (sorted(pdb_names)[0] if pdb_names else None)
+            if chosen:
+                pdb_text = zf.read(chosen).decode("utf-8", errors="replace")
+
+        if not pdb_text:
+            raise HTTPException(status_code=404, detail="No PDB files found in Tamarind ZIP.")
+
+        await log.ainfo("pdb_content_fetched_from_tamarind", job_id=job_id, tamarind_job=tamarind_job_name)
+
+        return Response(
+            content=pdb_text,
+            media_type="text/plain",
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
+
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Tamarind fetch error: {exc}") from exc
 
 
 @app.get("/jobs/{job_id}/download/raw-output")

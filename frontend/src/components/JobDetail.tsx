@@ -2,6 +2,7 @@ import type { Job } from '../types'
 import { StatusBadge } from './StatusBadge'
 import { MoEReport } from './MoEReport'
 import { RawOutputPanel } from './RawOutputPanel'
+import { MoleculeViewer } from './MoleculeViewer'
 
 interface JobDetailProps {
   job: Job
@@ -166,6 +167,24 @@ export function JobDetail({ job, onClose }: JobDetailProps) {
 
         {/* Active state */}
         {isActive && <ActiveSpinner />}
+
+        {/* Complete: 3D Structure Viewer */}
+        {job.status === 'complete' && (
+          <div className="mb-6">
+            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-widest mb-3 flex items-center gap-2">
+              <span className="flex-1 h-px bg-border-subtle" />
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
+              </svg>
+              <span>3D Structure</span>
+              <span className="flex-1 h-px bg-border-subtle" />
+            </h3>
+            <MoleculeViewer
+              jobId={job.job_id}
+              plddt={job.modal_output?.best_plddt_mean ?? null}
+            />
+          </div>
+        )}
 
         {/* Complete: MoE Report */}
         {job.status === 'complete' && job.moe_report && (

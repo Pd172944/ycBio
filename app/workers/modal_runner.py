@@ -238,12 +238,24 @@ async def run_inference(
     per_model_scores.sort(key=lambda x: x["rank"])
     await log.ainfo("output_written", dir=output_dir, pdb_count=len(pdb_files), models=len(per_model_scores))
 
+    # Read best-ranked PDB text into memory for inline 3D visualization
+    best_pdb_content: str | None = None
+    if pdb_files:
+        rank1_candidates = [p for p in pdb_files if "rank_001" in p or "rank_1_" in p]
+        best_pdb_path = rank1_candidates[0] if rank1_candidates else sorted(pdb_files)[0]
+        try:
+            with open(best_pdb_path) as fh:
+                best_pdb_content = fh.read()
+        except Exception:
+            pass
+
     best = per_model_scores[0] if per_model_scores else {}
     result: dict = {
         "job_id": job_id,
         "tamarind_job_name": tamarind_job_name,
         "sequence_length": len(sequence),
         "pdb_paths": pdb_files,
+        "best_pdb_content": best_pdb_content,
         "model_type": config_data.get("model_type", "alphafold2_ptm"),
         "num_models": config_data.get("num_models"),
         "num_recycles": config_data.get("num_recycles"),
