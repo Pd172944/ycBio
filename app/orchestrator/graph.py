@@ -122,7 +122,18 @@ async def node_dispatch_modal(state: dict) -> dict:
 
 
 def route_after_validate(state: dict) -> str:
-    return "failed" if state.get("status") == "failed" else "audit"
+    if state.get("status") == "failed":
+        return "failed"
+    # Batch mutagenesis variants are programmatically generated — skip redundancy audit
+    seq = state.get("sequence_input")
+    metadata: dict = {}
+    if hasattr(seq, "metadata"):
+        metadata = seq.metadata or {}
+    elif isinstance(seq, dict):
+        metadata = seq.get("metadata") or {}
+    if metadata.get("experiment_type") == "batch_mutagenesis":
+        return "dispatch_modal"
+    return "audit"
 
 
 def route_after_audit(state: dict) -> str:
@@ -153,7 +164,7 @@ def build_graph() -> StateGraph:
     graph.set_entry_point("validate")
 
     graph.add_conditional_edges(
-        "validate", route_after_validate, {"audit": "audit", "failed": END}
+        "validate", route_after_validate, {"audit": "audit", "dispatch_modal": "dispatch_modal", "failed": END}
     )
     graph.add_conditional_edges(
         "audit", route_after_audit, {"dispatch_modal": "dispatch_modal", "failed": END, END: END}
